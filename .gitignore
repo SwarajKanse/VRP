@@ -1,0 +1,56 @@
+# Build directories
+build/
+dist/
+*.egg-info/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# C++ compiled files
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.dll
+*.dylib
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.hypothesis/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
