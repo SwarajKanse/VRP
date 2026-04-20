@@ -2,40 +2,40 @@
 
 ## Core Technologies
 
-- **Language**: C++20 (required standard)
-- **Build System**: CMake 3.15+
-- **Python Bindings**: Nanobind (modern, lightweight binding library)
-- **Testing Framework**: pytest (Python) with hypothesis for property-based testing
+- **Language**: Python 3.8+ (pure Python implementation)
+- **Testing Framework**: pytest with hypothesis for property-based testing
+- **Dashboard**: Streamlit for web interface
 
-## Build System
+## Python Dependencies
 
-The project uses CMake with the following key configurations:
+The project uses standard Python packages:
 
-- C++20 standard enforcement (`CMAKE_CXX_STANDARD 20`)
-- Nanobind integration via `nanobind_add_module`
-- Static core library (`vrp_solver_core`) for C++ testing
-- Python extension module (`vrp_core`) for Python integration
-- Release mode optimizations: `-O3 -march=native`
+- **pytest**: Testing framework
+- **hypothesis**: Property-based testing
+- **streamlit**: Web dashboard framework
+- **pandas**: Data manipulation
+- **numpy**: Numerical operations
+- **plotly**: Interactive visualizations
+- **pydeck**: Map visualizations
+- **reportlab**: PDF generation
+- **requests**: HTTP client
 
 ## Common Commands
 
-### Building the Project
+### Installing Dependencies
 
 ```bash
-# Configure and build
-mkdir build && cd build
-cmake ..
-cmake --build .
+# Install all dependencies
+pip install -r requirements.txt
 
-# Build with Release optimizations
-cmake -DCMAKE_BUILD_TYPE=Release ..
-cmake --build .
+# Or use setup script
+python setup.py
 ```
 
 ### Running Tests
 
 ```bash
-# Run Python tests
+# Run all tests
 python -m pytest tests/ -v
 
 # Run property-based tests with more iterations
@@ -45,51 +45,42 @@ python -m pytest tests/ -v --hypothesis-profile=thorough
 python -m pytest tests/test_solver.py -v
 ```
 
-### Running C++ Test Executables
+### Running the Dashboard
 
 ```bash
-# From build directory
-./test_distance
-./test_nearest_neighbor
-./test_multiple_routes
-./test_infinite_loop
+# From project root
+cd dashboard
+streamlit run app.py
+
+# Or use quick launcher
+python run_dashboard.bat  # Windows
+./run_dashboard.sh        # Linux/macOS
 ```
 
-### Cleaning Build Artifacts
+### Verification
 
 ```bash
-# Remove build directory
-rm -rf build/
-
-# Remove Python compiled modules
-rm -f *.pyd *.so
+# Verify installation
+python test_installation.py
 ```
-
-## Dependencies
-
-### Required
-
-- CMake 3.15 or higher
-- C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 19.29+)
-- Python 3.8+ with development headers
-- Nanobind (installed via pip: `pip install nanobind`)
-
-### Testing
-
-- pytest: `pip install pytest`
-- hypothesis: `pip install hypothesis` (for property-based testing)
 
 ## Platform Notes
 
+### All Platforms
+
+- Pure Python implementation works on any platform with Python 3.8+
+- No compilation required
+- No platform-specific dependencies
+- No C++ runtime requirements
+
 ### Windows
 
-- The Python extension is built as `.pyd` file
-- May require Visual C++ Redistributable for runtime
-- CMake outputs to `build/Release/` by default on Windows
-- Use `os.add_dll_directory()` in Python to load the module correctly
+- No Visual C++ Redistributable needed
+- No MinGW or compiler required
+- Works with standard Python installation
 
 ### Linux/macOS
 
-- The Python extension is built as `.so` file
-- Standard CMake output to `build/` directory
-- May need to set `LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH` for dynamic linking
+- Works with standard Python 3.8+ installation
+- No additional system packages required
+

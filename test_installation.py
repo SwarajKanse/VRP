@@ -3,7 +3,6 @@ Quick installation verification script
 Run this after setup to verify everything is working
 """
 import sys
-import os
 
 def test_imports():
     """Test that all required modules can be imported"""
@@ -15,8 +14,7 @@ def test_imports():
         'streamlit',
         'pandas',
         'plotly',
-        'reportlab',
-        'nanobind'
+        'reportlab'
     ]
     
     missing = []
@@ -36,19 +34,9 @@ def test_imports():
     print("✓ All Python dependencies installed\n")
     return True
 
-def test_cpp_extension():
-    """Test that the C++ extension can be loaded"""
-    print("Testing C++ extension...")
-    
-    # Add DLL directories for Windows
-    if sys.platform == 'win32':
-        mingw_path = r"C:\mingw64\bin"
-        if os.path.exists(mingw_path):
-            os.add_dll_directory(mingw_path)
-        
-        build_path = os.path.abspath("build")
-        if os.path.exists(build_path):
-            os.add_dll_directory(build_path)
+def test_vrp_module():
+    """Test that the pure Python VRP module can be loaded"""
+    print("Testing VRP module...")
     
     try:
         import vrp_core
@@ -64,18 +52,17 @@ def test_cpp_extension():
         solver = vrp_core.VRPSolver()
         print("  ✓ VRPSolver instantiated")
         
-        print("✓ C++ extension working correctly\n")
+        print("✓ Pure Python VRP module working correctly\n")
         return True
         
     except ImportError as e:
         print(f"  ✗ Failed to import vrp_core: {e}")
         print("\nTroubleshooting:")
-        print("  1. Run: python setup.py")
-        print("  2. Check that build/ directory exists")
-        print("  3. Look for vrp_core.*.pyd (Windows) or vrp_core.*.so (Linux/macOS)")
+        print("  1. Ensure vrp_core.py is in the project root")
+        print("  2. Check Python path includes project root")
         return False
     except Exception as e:
-        print(f"  ✗ Error testing extension: {e}")
+        print(f"  ✗ Error testing module: {e}")
         return False
 
 def test_sample_solve():
@@ -83,16 +70,6 @@ def test_sample_solve():
     print("Testing VRP solver...")
     
     try:
-        # Add DLL directories for Windows
-        if sys.platform == 'win32':
-            mingw_path = r"C:\mingw64\bin"
-            if os.path.exists(mingw_path):
-                os.add_dll_directory(mingw_path)
-            
-            build_path = os.path.abspath("build")
-            if os.path.exists(build_path):
-                os.add_dll_directory(build_path)
-        
         import vrp_core
         
         # Create simple problem
@@ -131,6 +108,8 @@ def test_sample_solve():
         
     except Exception as e:
         print(f"  ✗ Error solving VRP: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def main():
@@ -145,8 +124,8 @@ def main():
     # Test imports
     results.append(("Python Dependencies", test_imports()))
     
-    # Test C++ extension
-    results.append(("C++ Extension", test_cpp_extension()))
+    # Test VRP module
+    results.append(("VRP Module", test_vrp_module()))
     
     # Test solver
     results.append(("VRP Solver", test_sample_solve()))
@@ -166,7 +145,7 @@ def main():
     print("=" * 60)
     
     if all_passed:
-        print("\n✅ All tests passed! Installation successful.")
+        print("\n✅ All tests passed! Pure Python installation successful.")
         print("\nNext steps:")
         print("  1. Run dashboard: cd dashboard && streamlit run app.py")
         print("  2. Run full tests: python -m pytest tests/ -v")

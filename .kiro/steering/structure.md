@@ -3,91 +3,105 @@
 ## Directory Layout
 
 ```
-cpp-vrp-solver-foundation/
+vrp-solver/
 ├── .kiro/
 │   ├── specs/                    # Feature specifications
-│   │   └── cpp-vrp-solver-foundation/
-│   │       ├── requirements.md   # Requirements document
-│   │       ├── design.md         # Design document
-│   │       └── tasks.md          # Implementation tasks
 │   └── steering/                 # AI assistant guidance documents
-├── include/
-│   └── solver.h                  # Public API: VRPSolver, Location, Customer
-├── src/
-│   ├── solver.cpp                # VRPSolver implementation
-│   ├── bindings.cpp              # Nanobind Python bindings
-│   ├── main.cpp                  # Optional C++ entry point
-│   └── test_*.cpp                # C++ test executables
+├── dashboard/
+│   ├── app.py                    # Main Streamlit dashboard
+│   ├── csv_parser.py             # CSV manifest parser
+│   ├── financial_engine.py       # Cost calculations
+│   ├── fleet_composer.py         # Fleet management
+│   ├── packing_engine.py         # Bin packing algorithms
+│   └── ...                       # Other dashboard modules
 ├── tests/
-│   ├── test_solver.py            # Python unit tests
-│   ├── test_fixes.py             # Additional test cases
-│   └── vrp_core.*.pyd            # Compiled Python extension (Windows)
-├── build/                        # CMake build output (gitignored)
-├── CMakeLists.txt                # Build configuration
-└── *.md                          # Documentation and verification files
+│   ├── test_solver.py            # VRP solver tests
+│   ├── test_packing_algorithm.py # Packing tests
+│   └── ...                       # Other test files
+├── vrp_core.py                   # Pure Python VRP solver module
+├── test_installation.py          # Installation verification
+├── setup.py                      # Setup script
+├── setup.bat / setup.sh          # Platform-specific setup scripts
+├── requirements.txt              # Python dependencies
+└── *.md                          # Documentation files
 ```
 
 ## Key Files
 
 ### Core Implementation
 
-- **include/solver.h**: Header-only API definitions for Location, Customer, and VRPSolver classes
-- **src/solver.cpp**: Implementation of VRPSolver including:
-  - Distance matrix construction
-  - Haversine distance calculation
-  - Nearest Neighbor heuristic
-  - Constraint validation (capacity, time windows)
-- **src/bindings.cpp**: Nanobind module definition exposing C++ classes to Python
+- **vrp_core.py**: Pure Python VRP solver module containing:
+  - `Location`: Geographic coordinate dataclass
+  - `Customer`: Delivery point dataclass with demand and time windows
+  - `VRPSolver`: Main solver class with nearest neighbor heuristic
+  - `haversine_distance()`: Geographic distance utility function
 
-### Build System
+### Dashboard
 
-- **CMakeLists.txt**: Defines build targets:
-  - `vrp_solver_core`: Static library for C++ testing
-  - `vrp_core`: Python extension module
-  - `vrp_solver_exe`: Optional C++ executable
-  - `test_*`: C++ test executables
+- **dashboard/app.py**: Main Streamlit application entry point
+- **dashboard/csv_parser.py**: Parses delivery manifest CSV files
+- **dashboard/financial_engine.py**: Calculates routing costs and metrics
+- **dashboard/fleet_composer.py**: Manages vehicle fleet configuration
+- **dashboard/packing_engine.py**: Bin packing algorithms for cargo loading
 
 ### Testing
 
-- **tests/test_solver.py**: Primary test suite with pytest
-- **tests/test_fixes.py**: Additional regression tests
-- **src/test_*.cpp**: Standalone C++ tests for specific functionality
+- **tests/test_solver.py**: Primary test suite with pytest and hypothesis
+- **tests/test_*.py**: Additional test modules for various components
+- **test_installation.py**: Quick verification script
+
+### Configuration
+
+- **requirements.txt**: Python package dependencies
+- **setup.py**: Installation script
+- **.gitignore**: Git ignore patterns
 
 ## Architecture Layers
 
-### Layer 1: Data Structures (include/solver.h)
+### Layer 1: Data Structures (vrp_core.py)
 
 - `Location`: Geographic coordinates (latitude, longitude)
-- `Customer`: Delivery point with demand and time windows
-- `Route`: Type alias for `std::vector<int>` (customer IDs)
+- `Customer`: Delivery point with demand, time windows, and service time
+- `Route`: Type alias for `list[int]` (customer IDs)
 
-### Layer 2: Core Solver (src/solver.cpp)
+### Layer 2: Core Solver (vrp_core.py)
 
-- `VRPSolver::solve()`: Main entry point
-- `VRPSolver::buildDistanceMatrix()`: Precompute distances
-- `VRPSolver::nearestNeighborHeuristic()`: Route construction
-- `VRPSolver::canAddToRoute()`: Constraint validation
-- `VRPSolver::haversineDistance()`: Geographic distance calculation
+- `VRPSolver.solve()`: Main entry point
+- `VRPSolver._build_distance_matrix()`: Precompute Euclidean distances
+- `VRPSolver._nearest_neighbor_heuristic()`: Route construction algorithm
+- `VRPSolver._can_add_to_route()`: Constraint validation
+- `haversine_distance()`: Geographic distance calculation
 
-### Layer 3: Python Bindings (src/bindings.cpp)
+### Layer 3: Dashboard Integration (dashboard/)
 
-- Exposes Location, Customer, VRPSolver to Python
-- Handles type conversions via Nanobind
-- Module name: `vrp_core`
+- Imports `vrp_core` module directly
+- Converts CSV data to Customer objects
+- Calls solver and visualizes results
+- Generates reports and metrics
 
 ## Code Organization Principles
 
-1. **Separation of Concerns**: Data structures are separate from algorithms
-2. **Header-Only API**: Public interface in single header file
-3. **Implementation Isolation**: Private methods in .cpp file
-4. **Binding Isolation**: Python bindings in separate compilation unit
-5. **Test Separation**: C++ tests in src/, Python tests in tests/
+1. **Pure Python**: No compilation required, works on any platform
+2. **Separation of Concerns**: Data structures separate from algorithms
+3. **Single Module**: Core solver in one file for simplicity
+4. **Standard Library**: Minimal external dependencies
+5. **Test Isolation**: Comprehensive test coverage with pytest
 
-## Future Refactoring Considerations
+## Module Import Structure
 
-The current structure uses Array of Structs (AoS) layout. Future optimization may convert to Struct of Arrays (SoA) for SIMD operations:
+```python
+# From dashboard or tests
+import vrp_core
 
-- Current: `std::vector<Customer>` (AoS)
-- Future: Parallel arrays for id[], lat[], lon[], demand[], etc. (SoA)
+# Create objects
+location = vrp_core.Location(lat, lon)
+customer = vrp_core.Customer(id, location, demand, start, end, service)
+solver = vrp_core.VRPSolver()
 
-The public API can remain unchanged during this refactoring.
+# Solve problem
+routes = solver.solve(customers, capacities)
+
+# Calculate distances
+dist = vrp_core.haversine_distance(lat1, lon1, lat2, lon2)
+```
+

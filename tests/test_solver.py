@@ -1,44 +1,8 @@
 import pytest
-import sys
-import os
 import math
 
-# Windows-specific DLL path fix
-# NOTE: On Windows, the vrp_core.pyd module may fail to load due to missing C++ runtime DLLs.
-# This is an environment issue, not a code issue. The C++ tests (test_*.exe in build/) 
-# verify that the core solver logic works correctly.
-# 
-# To fix this issue, you may need to:
-# 1. Install Visual C++ Redistributable for Visual Studio
-# 2. Ensure all C++ runtime DLLs are in PATH
-# 3. Build with static linking (modify CMakeLists.txt)
-
-if os.name == 'nt':  # Look for the build/Release folder where CMake puts the .pyd
-    test_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(test_dir, '..'))
-    build_release_path = os.path.join(project_root, 'build', 'Release')
-    build_path = os.path.join(project_root, 'build')
-    
-    # Critical: Add DLL directories for MinGW runtime
-    os.add_dll_directory(r"C:\mingw64\bin")
-    os.add_dll_directory(os.path.abspath(build_path))
-    
-    # Add paths in order of preference
-    if os.path.exists(build_release_path):
-        sys.path.insert(0, build_release_path)
-        os.add_dll_directory(build_release_path)  # Critical for Windows Python 3.8+
-    if os.path.exists(build_path):
-        sys.path.insert(0, build_path)
-
-try:
-    import vrp_core
-except ImportError as e:
-    pytest.skip(
-        f"vrp_core module not available: {e}. "
-        "This may be due to missing C++ runtime DLLs on Windows. "
-        "The C++ tests (test_*.exe in build/) verify the core solver logic works correctly.",
-        allow_module_level=True
-    )
+# Import pure Python VRP solver
+import vrp_core
 
 # Import hypothesis for property-based testing
 try:

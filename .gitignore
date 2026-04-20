@@ -1,24 +1,8 @@
-# Build directories
-build/
-dist/
-*.egg-info/
-
 # Python cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .Python
-
-# C++ compiled files
-*.o
-*.obj
-*.exe
-*.out
-*.app
-*.dll
-*.dylib
-*.pyd
 
 # IDE
 .vscode/
@@ -54,3 +38,7 @@ ENV/
 *.tmp
 *.bak
 *.backup
+
+# Distribution
+dist/
+*.egg-info/
