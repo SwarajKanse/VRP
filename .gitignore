@@ -42,3 +42,7 @@ ENV/
 # Distribution
 dist/
 *.egg-info/
+
+# Runtime platform data
+build/
+var/

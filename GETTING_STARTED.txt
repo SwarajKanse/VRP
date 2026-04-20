@@ -1,171 +1,58 @@
 ================================================================================
-                    VRP SOLVER - GETTING STARTED
+                        VRP PLATFORM - GETTING STARTED
 ================================================================================
 
-Thank you for downloading VRP Solver!
+This repository now contains the platform implementation only.
 
-This package contains a complete Vehicle Routing Problem solver with:
-  - High-performance C++ core engine
-  - Easy-to-use Python API
-  - Interactive web dashboard
-  - Comprehensive test suite
-  - Sample data and examples
-
-================================================================================
-                         QUICK SETUP
-================================================================================
-
-STEP 1: Install Prerequisites
-------------------------------
-You need:
-  - Python 3.8 or higher
-  - CMake 3.15 or higher
-  - C++20 compatible compiler (GCC 10+, Clang 10+, or MSVC 19.29+)
-
-STEP 2: Run Setup
------------------
-Windows:
-  Double-click: setup.bat
-  Or run in Command Prompt: setup.bat
-
-Linux/macOS:
-  Open terminal in this folder and run:
-    chmod +x setup.sh
-    ./setup.sh
-
-The setup will:
-  ✓ Check your system prerequisites
-  ✓ Install Python dependencies
-  ✓ Build the C++ extension
-  ✓ Verify the installation
-
-STEP 3: Run the Dashboard
---------------------------
-Windows:
-  Double-click: run_dashboard.bat
-
-Linux/macOS:
-  Open terminal and run:
-    chmod +x run_dashboard.sh
-    ./run_dashboard.sh
-
-The dashboard will open in your browser at http://localhost:8501
+What you get:
+  - Dispatcher control tower
+  - Customer shipment lookup
+  - Driver route workflow
+  - Warehouse load-sheet generation
+  - Pure-Python routing engine and persistence layer
 
 ================================================================================
-                         WHAT'S INCLUDED
+                                QUICK SETUP
 ================================================================================
 
-Files and Folders:
-  src/              - C++ source code
-  include/          - C++ headers
-  dashboard/        - Web dashboard application
-  tests/            - Test suite
-  sample_manifest.csv - Example data file
-  
-Documentation:
-  README.md         - Complete documentation
-  QUICKSTART.md     - Step-by-step setup guide
-  LICENSE           - MIT License
+1. Install
+   Windows: setup.bat
+   Linux/macOS: chmod +x setup.sh && ./setup.sh
 
-Setup Scripts:
-  setup.bat         - Windows automated setup
-  setup.sh          - Linux/macOS automated setup
-  setup.py          - Python setup script
-  
-Run Scripts:
-  run_dashboard.bat - Windows dashboard launcher
-  run_dashboard.sh  - Linux/macOS dashboard launcher
-  
-Test Scripts:
-  test_installation.py - Verify installation
+2. Verify
+   python test_installation.py
+
+3. Run
+   python -m vrp_platform.ui.app
+
+4. Open
+   http://localhost:8080
 
 ================================================================================
-                         FEATURES
+                              PROJECT STRUCTURE
 ================================================================================
 
-✓ Heterogeneous Fleet Support
-  Define mixed vehicle fleets with different capacities
-
-✓ Capacity & Time Window Constraints
-  Routes respect vehicle limits and customer time windows
-
-✓ CSV Manifest Upload
-  Upload order data with package dimensions and constraints
-
-✓ Vehicle-Specific Fuel Economics
-  Track fuel costs per vehicle type
-
-✓ Physics-Compliant 3D Packing
-  Intelligent LIFO packing with fragile and orientation constraints
-
-✓ Driver Manifest Generation
-  Export professional CSV and PDF delivery instructions
-
-✓ Interactive Dashboard
-  Web-based interface for fleet management and route visualization
+  src/vrp_platform/     Platform code
+  tests/platform/       Focused platform checks
+  sample_manifest.csv   Example intake file
+  setup.bat / setup.sh  Local setup scripts
+  run_dashboard.*       Platform launcher scripts
 
 ================================================================================
-                         TROUBLESHOOTING
+                              IMPORTANT SETTINGS
 ================================================================================
 
-Problem: "CMake not found"
-Solution: Install CMake from https://cmake.org/download/
-
-Problem: "Compiler not found"
-Solution:
-  - Windows: Install Visual Studio 2019+ or MinGW-w64
-  - Linux: sudo apt install build-essential
-  - macOS: xcode-select --install
-
-Problem: "ImportError: DLL load failed" (Windows)
-Solution: Ensure MinGW is installed and in your PATH
-
-Problem: Dashboard won't start
-Solution:
-  1. Make sure you're in the dashboard folder
-  2. Run: pip install -r requirements.txt
-  3. Try: streamlit run app.py
-
-For more help, see QUICKSTART.md
+  VRP_DATABASE_URL   Database connection string
+  VRP_REDIS_URL      Queue backend target
+  VRP_TIMEZONE       Operational timezone
 
 ================================================================================
-                         NEXT STEPS
+                               NEXT STEPS
 ================================================================================
 
-1. Run the Dashboard
-   - Upload sample_manifest.csv to see the solver in action
-   - Configure your fleet with different vehicle types
-   - View optimized routes and packing visualizations
-
-2. Run the Tests
-   - Verify everything works: python -m pytest tests/ -v
-   - See test files for usage examples
-
-3. Use the Python API
-   - Check README.md for API documentation
-   - See tests/ folder for code examples
-
-4. Customize
-   - Modify fleet configurations
-   - Adjust packing constraints
-   - Integrate with your own data
-
-================================================================================
-                         SUPPORT
-================================================================================
-
-Documentation:
-  - README.md - Full documentation and API reference
-  - QUICKSTART.md - Detailed setup instructions
-  - tests/ - Code examples and usage patterns
-
-Questions or Issues:
-  - Check the troubleshooting section in QUICKSTART.md
-  - Review test files for usage examples
-  - Open an issue on the project repository
-
-================================================================================
-
-Happy routing! 🚚📦
+  1. Ingest a manifest from the dispatcher page
+  2. Run a filtered or selected-order optimization
+  3. Review warehouse load sheets and route board
+  4. Assign the demo driver to inspect the driver workflow
 
 ================================================================================

@@ -1,6 +1,0 @@
-streamlit
-pydeck
-pandas
-numpy
-reportlab
-hypothesis

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vrp-platform"
+version = "0.1.0"
+description = "Industry-grade Python vehicle routing platform"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.13.2",
+  "nicegui>=2.0.0",
+  "pandas>=1.5.0",
+  "pydantic>=2.8.2",
+  "pydantic-settings>=2.3.4",
+  "reportlab>=3.6.0",
+  "requests>=2.28.0",
+  "redis>=5.0.8",
+  "rq>=1.16.2",
+  "sqlalchemy>=2.0.32",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6.0.0",
+  "pytest>=7.0.0",
+  "ruff>=0.6.2",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N"]
+

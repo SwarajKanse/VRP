@@ -1,11 +1,10 @@
 @echo off
-REM Quick launcher for VRP Solver Dashboard (Windows)
+REM Quick launcher for VRP Platform (Windows)
 
-echo Starting VRP Solver Dashboard...
+echo Starting VRP Platform...
 echo.
-echo The dashboard will open in your browser at http://localhost:8501
+echo The control tower will open in your browser at http://localhost:8080
 echo Press Ctrl+C to stop the server
 echo.
 
-cd dashboard
-streamlit run app.py
+python -m vrp_platform.ui.app

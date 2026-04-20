@@ -1,8 +1,8 @@
 @echo off
-REM Windows setup script for VRP Solver (Pure Python)
+REM Windows setup script for VRP Platform
 
 echo ============================================================
-echo VRP Solver Setup (Windows) - Pure Python
+echo VRP Platform Setup (Windows)
 echo ============================================================
 
 REM Check Python
@@ -19,7 +19,7 @@ echo [OK] Python found
 REM Install dependencies
 echo.
 echo Installing Python dependencies...
-pip install -r requirements.txt
+python -m pip install -e .[dev]
 if errorlevel 1 (
     echo.
     echo [ERROR] Failed to install dependencies.
@@ -32,9 +32,8 @@ echo ============================================================
 echo Setup completed successfully!
 echo ============================================================
 echo.
-echo To run the dashboard:
-echo   cd dashboard
-echo   streamlit run app.py
+echo To run the platform:
+echo   python -m vrp_platform.ui.app
 echo.
 echo To run tests:
 echo   python -m pytest tests/ -v

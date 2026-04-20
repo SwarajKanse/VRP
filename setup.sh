@@ -1,8 +1,8 @@
 #!/bin/bash
-# Linux/macOS setup script for VRP Solver (Pure Python)
+# Linux/macOS setup script for VRP Platform
 
 echo "============================================================"
-echo "VRP Solver Setup (Linux/macOS) - Pure Python"
+echo "VRP Platform Setup (Linux/macOS)"
 echo "============================================================"
 
 # Check Python
@@ -16,7 +16,7 @@ echo "[OK] Python found: $(python3 --version)"
 # Install dependencies
 echo ""
 echo "Installing Python dependencies..."
-pip3 install -r requirements.txt
+python3 -m pip install -e .[dev]
 if [ $? -ne 0 ]; then
     echo ""
     echo "[ERROR] Failed to install dependencies."
@@ -28,9 +28,8 @@ echo "============================================================"
 echo "Setup completed successfully!"
 echo "============================================================"
 echo ""
-echo "To run the dashboard:"
-echo "  cd dashboard"
-echo "  streamlit run app.py"
+echo "To run the platform:"
+echo "  python3 -m vrp_platform.ui.app"
 echo ""
 echo "To run tests:"
 echo "  python3 -m pytest tests/ -v"
