@@ -91,6 +91,10 @@ class OrderRepository:
     def upsert_orders(self, orders: list[Order]) -> list[Order]:
         for order in orders:
             row = self.session.get(OrderRecord, order.id)
+            if row is None:
+                row = self.session.scalars(
+                    select(OrderRecord).where(OrderRecord.external_ref == order.external_ref)
+                ).first()
             payload = {
                 "external_ref": order.external_ref,
                 "customer_name": order.customer_name,
@@ -116,6 +120,7 @@ class OrderRepository:
                 row = OrderRecord(id=order.id, **payload)
                 self.session.add(row)
             else:
+                order.id = row.id
                 for key, value in payload.items():
                     setattr(row, key, value)
         self.session.flush()

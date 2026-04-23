@@ -8,20 +8,25 @@ from zoneinfo import ZoneInfo
 
 from vrp_platform.config import PlatformSettings
 from vrp_platform.domain.entities import (
+    AdminSnapshot,
     Depot,
     DispatcherSnapshot,
     DriverBreakWindow,
     DriverRouteView,
     DriverStopView,
     MapPoint,
+    RouteInsightView,
     RouteMapView,
     ShipmentSnapshot,
     SolveRequest,
     TrafficIncident,
     Vehicle,
     VehicleLivePosition,
+    WarehouseDockView,
+    WarehouseSnapshot,
 )
-from vrp_platform.domain.enums import ObjectiveMode, OrderStatus
+from vrp_platform.domain.enums import ObjectiveMode, OrderStatus, PlanStatus
+from vrp_platform.integrations.travel import RouteGeometryProvider
 from vrp_platform.repos.catalog import CatalogRepository
 from vrp_platform.repos.events import EventRepository
 from vrp_platform.repos.orders import OrderRepository
@@ -38,9 +43,87 @@ class OperationsService:
     order_repo: OrderRepository
     planning_repo: PlanningRepository
     event_repo: EventRepository
+    route_geometry_provider: RouteGeometryProvider
 
     def dispatcher_snapshot(self) -> DispatcherSnapshot:
         return self.dispatcher_snapshot_filtered()
+
+    def warehouse_snapshot(self) -> WarehouseSnapshot:
+        depots = self.catalog_repo.list_depots()
+        vehicles = self.catalog_repo.list_vehicles()
+        routes = self.planning_repo.list_recent_route_plans(limit=24)
+        route_orders = self.order_repo.get_orders([stop.order_id for route in routes for stop in route.stops])
+        issues = self.planning_repo.list_recent_issues(limit=24)
+        route_board = self.planning_repo.list_route_board(limit=24)
+        warehouse_plans = ManifestService().generate_warehouse_plans(routes, route_orders, vehicles)
+
+        route_index = {route.route_id: route for route in route_board}
+        dock_views: list[WarehouseDockView] = []
+        for bay_index, plan in enumerate(warehouse_plans, start=1):
+            board_entry = route_index.get(plan.route_id)
+            priority_orders = sum(1 for instruction in plan.instructions if "Priority stop" in instruction.notes)
+            readiness = "ready"
+            note = "Staged for loading"
+            if plan.utilization_pct > 92:
+                readiness = "attention"
+                note = "High utilization; verify dock balance and fragile placement"
+            elif priority_orders > 0:
+                readiness = "expedite"
+                note = "Contains priority drops; load this bay early"
+            dock_views.append(
+                WarehouseDockView(
+                    bay_label=f"Bay {bay_index:02d}",
+                    route_id=plan.route_id,
+                    vehicle_name=plan.vehicle_name,
+                    vehicle_category=plan.vehicle_category,
+                    departure_minute=board_entry.first_eta_minute if board_entry else None,
+                    readiness=readiness,
+                    utilization_pct=plan.utilization_pct,
+                    stop_count=len(plan.instructions),
+                    priority_orders=priority_orders,
+                    note=note,
+                )
+            )
+
+        return WarehouseSnapshot(
+            active_routes=len(warehouse_plans),
+            ready_bays=sum(1 for view in dock_views if view.readiness == "ready"),
+            attention_bays=sum(1 for view in dock_views if view.readiness != "ready"),
+            total_weight_kg=round(sum(plan.total_weight_kg for plan in warehouse_plans), 2),
+            total_volume_m3=round(sum(plan.total_volume_m3 for plan in warehouse_plans), 2),
+            dock_views=dock_views,
+            route_plans=warehouse_plans,
+            issues=issues,
+        )
+
+    def admin_snapshot(self) -> AdminSnapshot:
+        depots = self.catalog_repo.list_depots()
+        vehicles = self.catalog_repo.list_vehicles()
+        shifts = self.catalog_repo.list_shifts()
+        current_orders = self.order_repo.list_orders()
+        routes = self.planning_repo.list_route_board(limit=40)
+        route_plans = self.planning_repo.list_recent_route_plans(limit=40)
+        route_orders = self.order_repo.get_orders([stop.order_id for route in route_plans for stop in route.stops])
+        incidents = self.active_traffic_incidents(depots[0]) if depots else []
+        map_routes = self._map_routes(route_plans, route_orders, vehicles, depots, incidents) if depots else []
+        recent_runs = self.planning_repo.recent_runs(limit=20)
+        issues = self._live_issues(self.planning_repo.list_recent_issues(limit=40), routes, current_orders)
+        audits = self.event_repo.list_audit_logs(limit=40)
+        return AdminSnapshot(
+            total_routes=len(routes),
+            dispatched_routes=sum(1 for route in routes if route.status == PlanStatus.DISPATCHED),
+            optimization_runs=len(recent_runs),
+            open_issues=len(issues),
+            fallback_runs=self.event_repo.count_audit_logs("solve_plan_fallback"),
+            total_distance_km=round(sum(route.total_distance_km for route in routes), 2),
+            total_energy_cost=round(sum(route.total_energy_cost for route in routes), 2),
+            total_emissions_kg=round(sum(route.total_emissions_kg for route in routes), 2),
+            routes=routes,
+            recent_runs=recent_runs,
+            issues=issues,
+            audits=audits,
+            route_insights=self._build_route_insights(routes, route_plans, route_orders, vehicles, shifts, map_routes, issues),
+        )
 
     def dispatcher_snapshot_filtered(
         self,
@@ -53,12 +136,17 @@ class OperationsService:
     ) -> DispatcherSnapshot:
         depots = self.catalog_repo.list_depots()
         vehicles = self.catalog_repo.list_vehicles()
+        shifts = self.catalog_repo.list_shifts()
+        current_orders = self.order_repo.list_orders()
         routes = self.planning_repo.list_recent_route_plans()
         all_route_order_ids = [stop.order_id for route in routes for stop in route.stops]
         route_orders = self.order_repo.get_orders(all_route_order_ids)
         incidents = self.active_traffic_incidents(depots[0]) if depots else []
         map_routes = self._map_routes(routes, route_orders, vehicles, depots, incidents)
         warehouse_plans = ManifestService().generate_warehouse_plans(routes, route_orders, vehicles)
+        route_board = self.planning_repo.list_route_board()
+        recent_runs = self.planning_repo.recent_runs()
+        issues = self._live_issues(self.planning_repo.list_recent_issues(), route_board, current_orders)
         safe_page = max(page, 1)
         safe_page_size = max(page_size, 1)
         offset = (safe_page - 1) * safe_page_size
@@ -77,14 +165,25 @@ class OperationsService:
             pending_order_count=self.order_repo.count_orders(statuses=[OrderStatus.PENDING]),
             order_page=safe_page,
             order_page_size=safe_page_size,
-            routes=self.planning_repo.list_route_board(),
-            recent_runs=self.planning_repo.recent_runs(),
-            issues=self.planning_repo.list_recent_issues(),
+            routes=route_board,
+            recent_runs=recent_runs,
+            issues=issues,
             map_routes=map_routes,
             fleet_positions=[route.live_position for route in map_routes if route.live_position is not None],
             traffic_incidents=incidents,
             warehouse_plans=warehouse_plans,
+            route_insights=self._build_route_insights(route_board, routes, route_orders, vehicles, shifts, map_routes, issues),
         )
+
+    def _live_issues(self, issues, route_board, current_orders: list[Order]):
+        live_run_ids = {route.run_id for route in route_board}
+        live_order_ids = {order.id for order in current_orders}
+        filtered = [
+            issue
+            for issue in issues
+            if issue.run_id in live_run_ids or (issue.order_id is not None and issue.order_id in live_order_ids)
+        ]
+        return filtered if filtered else issues[:8]
 
     def build_solve_request(
         self,
@@ -130,11 +229,15 @@ class OperationsService:
         route = self.planning_repo.get_route_by_order(order.id)
         stop = None
         path_points: list[MapPoint] = []
+        stop_points: list[MapPoint] = []
         navigation_url = ""
         if route is not None and depots:
             order_lookup = {item.id: item for item in self.order_repo.get_orders([step.order_id for step in route.stops])}
-            route_map = self._route_map(route, order_lookup, {item.id: item for item in vehicles}, depots[0], [])
+            depot_lookup = {item.id: item for item in depots}
+            route_depot = depot_lookup.get(route.depot_id, depots[0])
+            route_map = self._route_map(route, order_lookup, {item.id: item for item in vehicles}, route_depot, [])
             path_points = route_map.path_points
+            stop_points = route_map.stop_points
             navigation_url = route_map.navigation_url
             stop = next((item for item in route.stops if item.order_id == order.id), None)
         return ShipmentSnapshot(
@@ -145,6 +248,7 @@ class OperationsService:
             stop_sequence=stop.sequence if stop else None,
             eta_minute=stop.arrival_minute if stop else None,
             path_points=path_points,
+            stop_points=stop_points if route else [],
             navigation_url=navigation_url,
             customer_events=self.event_repo.list_customer_events(order.id),
             delivery_events=self.event_repo.list_delivery_events(order.id),
@@ -160,9 +264,11 @@ class OperationsService:
             order.id: order for order in self.order_repo.get_orders([stop.order_id for stop in route.stops])
         }
         vehicle = vehicles.get(route.vehicle_id)
-        if vehicle is None or not depots:
+        depot_lookup = {depot.id: depot for depot in depots}
+        route_depot = depot_lookup.get(route.depot_id) if depots else None
+        if vehicle is None or route_depot is None:
             return None
-        route_map = self._route_map(route, order_lookup, vehicles, depots[0], [])
+        route_map = self._route_map(route, order_lookup, vehicles, route_depot, [])
         return DriverRouteView(
             route_id=route.route_id,
             vehicle_id=route.vehicle_id,
@@ -177,6 +283,7 @@ class OperationsService:
             total_break_min=route.total_break_min,
             break_windows=self._driver_break_windows(route, vehicle),
             path_points=route_map.path_points,
+            stop_points=route_map.stop_points,
             navigation_url=route_map.navigation_url,
             stops=[
                 DriverStopView(
@@ -230,14 +337,148 @@ class OperationsService:
         depots: list[Depot],
         incidents: list[TrafficIncident],
     ) -> list[RouteMapView]:
+        if not depots or not vehicles:
+            return []
         order_lookup = {order.id: order for order in orders}
         vehicle_lookup = {vehicle.id: vehicle for vehicle in vehicles}
-        depot = depots[0]
+        depot_lookup = {depot.id: depot for depot in depots}
         return [
-            self._route_map(route, order_lookup, vehicle_lookup, depot, incidents)
+            self._route_map(
+                route,
+                order_lookup,
+                vehicle_lookup,
+                depot_lookup.get(route.depot_id, depots[0]),
+                incidents,
+            )
             for route in routes
             if route.vehicle_id in vehicle_lookup
         ]
+
+    def _build_route_insights(
+        self,
+        route_board,
+        route_plans,
+        route_orders,
+        vehicles: list[Vehicle],
+        shifts,
+        map_routes: list[RouteMapView],
+        issues,
+    ) -> list[RouteInsightView]:
+        vehicle_lookup = {vehicle.id: vehicle for vehicle in vehicles}
+        shift_lookup = {shift.vehicle_id: shift for shift in shifts}
+        route_lookup = {route.route_id: route for route in route_plans}
+        map_lookup = {route.route_id: route for route in map_routes}
+        order_lookup = {order.id: order for order in route_orders}
+        issue_lookup: dict[str, int] = {}
+        for route in route_plans:
+            order_ids = {stop.order_id for stop in route.stops}
+            issue_lookup[route.route_id] = sum(1 for issue in issues if issue.order_id in order_ids)
+
+        insights: list[RouteInsightView] = []
+        for route in route_board:
+            vehicle = vehicle_lookup.get(route.vehicle_id)
+            route_plan = route_lookup.get(route.route_id)
+            if vehicle is None or route_plan is None:
+                continue
+            plan_orders = [order_lookup[stop.order_id] for stop in route_plan.stops if stop.order_id in order_lookup]
+            total_weight = sum(order.demand_kg for order in plan_orders)
+            total_volume = sum(order.volume_m3 for order in plan_orders)
+            utilization_pct = round(
+                max(
+                    (total_weight / max(vehicle.capacity_kg, 1.0)) * 100.0,
+                    (total_volume / max(vehicle.capacity_volume_m3, 1.0)) * 100.0,
+                ),
+                1,
+            )
+            shift = shift_lookup.get(vehicle.id)
+            route_limit = (
+                max(shift.end_minute - shift.start_minute, 1.0)
+                if shift is not None
+                else max(vehicle.max_shift_minutes, 1.0)
+            )
+            duty_used = route.total_drive_min + route_plan.total_service_min + route.total_break_min
+            duty_cycle_pct = round((duty_used / route_limit) * 100.0, 1)
+            priority_orders = sum(1 for order in plan_orders if order.priority <= 1)
+            issue_count = issue_lookup.get(route.route_id, 0)
+            traffic_delay = map_lookup.get(route.route_id).traffic_delay_min if route.route_id in map_lookup else 0.0
+            eta_confidence_pct = round(
+                max(
+                    52.0,
+                    min(
+                        97.0,
+                        95.0
+                        - traffic_delay * 1.2
+                        - max(0.0, utilization_pct - 78.0) * 0.35
+                        - max(0.0, duty_cycle_pct - 76.0) * 0.4
+                        - priority_orders * 2.5
+                        - issue_count * 4.5,
+                    ),
+                ),
+                1,
+            )
+            risk_score = round(
+                min(
+                    99.0,
+                    max(0.0, utilization_pct - 72.0) * 0.8
+                    + max(0.0, duty_cycle_pct - 70.0) * 0.7
+                    + traffic_delay * 1.1
+                    + priority_orders * 4.5
+                    + issue_count * 8.0
+                    + (8.0 if route.driver_id is None else 0.0),
+                ),
+                1,
+            )
+            if risk_score >= 58.0:
+                risk_level = "critical"
+            elif risk_score >= 36.0:
+                risk_level = "watch"
+            else:
+                risk_level = "stable"
+
+            headline = "Release ready with good operational slack."
+            suggested_action = "Keep route as planned."
+            if issue_count > 0:
+                headline = "Open route issues are reducing execution certainty."
+                suggested_action = "Resolve exceptions before releasing the truck."
+            elif utilization_pct >= 92.0:
+                headline = "Truck is close to hard capacity or cube saturation."
+                suggested_action = "Rebalance dense freight or verify the fill sequence."
+            elif duty_cycle_pct >= 90.0:
+                headline = "Route is close to the driver duty envelope."
+                suggested_action = "Shift one stop or extend the shift before dispatch."
+            elif traffic_delay >= 18.0:
+                headline = "Traffic exposure is materially degrading ETA confidence."
+                suggested_action = "Consider incident-aware resequencing or delayed release."
+            elif route.driver_id is None:
+                headline = "The route is planned but still missing a driver."
+                suggested_action = "Assign a driver and confirm readiness."
+
+            insights.append(
+                RouteInsightView(
+                    route_id=route.route_id,
+                    vehicle_name=route.vehicle_name,
+                    vehicle_category=route.vehicle_category,
+                    depot_id=route.depot_id,
+                    driver_id=route.driver_id,
+                    status=route.status,
+                    stop_count=route.stop_count,
+                    total_distance_km=route.total_distance_km,
+                    total_cost=route.total_cost,
+                    total_energy_cost=route.total_energy_cost,
+                    fuel_used=route.fuel_used,
+                    traffic_delay_min=round(traffic_delay, 1),
+                    utilization_pct=utilization_pct,
+                    duty_cycle_pct=round(duty_cycle_pct, 1),
+                    eta_confidence_pct=eta_confidence_pct,
+                    priority_orders=priority_orders,
+                    issue_count=issue_count,
+                    risk_score=risk_score,
+                    risk_level=risk_level,
+                    headline=headline,
+                    suggested_action=suggested_action,
+                )
+            )
+        return sorted(insights, key=lambda item: (-item.risk_score, -item.utilization_pct, item.route_id))
 
     def _route_map(
         self,
@@ -248,12 +489,12 @@ class OperationsService:
         incidents: list[TrafficIncident],
     ) -> RouteMapView:
         vehicle = vehicle_lookup[route.vehicle_id]
-        path_points = [MapPoint(depot.latitude, depot.longitude, depot.name, "depot")]
+        stop_points = [MapPoint(depot.latitude, depot.longitude, depot.name, "depot")]
         for stop in route.stops:
             order = order_lookup.get(stop.order_id)
             if order is None:
                 continue
-            path_points.append(
+            stop_points.append(
                 MapPoint(
                     latitude=order.latitude,
                     longitude=order.longitude,
@@ -261,7 +502,8 @@ class OperationsService:
                     kind="stop",
                 )
             )
-        path_points.append(MapPoint(depot.latitude, depot.longitude, f"{depot.name} return", "depot"))
+        stop_points.append(MapPoint(depot.latitude, depot.longitude, f"{depot.name} return", "depot"))
+        path_points = self._geometry_points(stop_points)
         live_position = self._live_position(route, vehicle, order_lookup, depot)
         traffic_delay = route.total_drive_min - (route.total_distance_km / max(vehicle.average_speed_kmh, 1.0) * 60.0)
         return RouteMapView(
@@ -272,10 +514,25 @@ class OperationsService:
             driver_id=None,
             status=route.status,
             path_points=path_points,
+            stop_points=stop_points,
             live_position=live_position,
             traffic_delay_min=max(0.0, traffic_delay),
-            navigation_url=self._navigation_url(path_points),
+            navigation_url=self._navigation_url(stop_points),
         )
+
+    def _geometry_points(self, stop_points: list[MapPoint]) -> list[MapPoint]:
+        waypoints = [(point.latitude, point.longitude) for point in stop_points]
+        result = self.route_geometry_provider.build(waypoints)
+        points = result.points or waypoints
+        return [
+            MapPoint(
+                latitude=latitude,
+                longitude=longitude,
+                label=f"road-{index}",
+                kind="geometry",
+            )
+            for index, (latitude, longitude) in enumerate(points, start=1)
+        ]
 
     def _live_position(
         self,

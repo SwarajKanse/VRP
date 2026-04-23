@@ -22,6 +22,8 @@ class PlatformSettings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0")
     use_osrm: bool = Field(default=False)
     osrm_base_url: str = Field(default="http://router.project-osrm.org")
+    use_road_geometry: bool = Field(default=True)
+    route_geometry_profile: str = Field(default="driving")
     default_speed_kmh: float = Field(default=32.0)
     rush_hour_multiplier: float = Field(default=1.35)
     demo_live_traffic: bool = Field(default=True)

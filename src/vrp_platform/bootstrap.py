@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from vrp_platform.config import PlatformSettings, get_settings
 from vrp_platform.db import Base, create_session_factory, ensure_schema, session_scope
 from vrp_platform.domain.entities import (
+    AdminSnapshot,
     ConstraintSet,
     DeliveryEvent,
     Depot,
@@ -19,10 +20,11 @@ from vrp_platform.domain.entities import (
     SolveRequest,
     SolveResponse,
     Vehicle,
+    WarehouseSnapshot,
 )
 from vrp_platform.domain.enums import ObjectiveMode, OrderStatus, VehicleEnergyType
 from vrp_platform.domain.enums import VehicleCategory
-from vrp_platform.integrations.travel import HybridTravelMatrixProvider
+from vrp_platform.integrations.travel import HybridRouteGeometryProvider, HybridTravelMatrixProvider
 from vrp_platform.logging import configure_logging
 from vrp_platform.optimizer.engine import RouteOptimizer
 from vrp_platform.optimizer.fallback import FallbackSolver
@@ -42,6 +44,7 @@ class PlatformApp:
     settings: PlatformSettings
     session_factory: sessionmaker[Session]
     auth_service: AuthService
+    route_geometry_provider: HybridRouteGeometryProvider
 
     def ingest_manifest(self, manifest_bytes: bytes) -> tuple[list[Order], list[str]]:
         with session_scope(self.session_factory) as session:
@@ -113,6 +116,14 @@ class PlatformApp:
         with session_scope(self.session_factory) as session:
             return self._operations_service(session).driver_route(driver_id)
 
+    def warehouse_snapshot(self) -> WarehouseSnapshot:
+        with session_scope(self.session_factory) as session:
+            return self._operations_service(session).warehouse_snapshot()
+
+    def admin_snapshot(self) -> AdminSnapshot:
+        with session_scope(self.session_factory) as session:
+            return self._operations_service(session).admin_snapshot()
+
     def _planning_service(self, session: Session) -> PlanningService:
         return PlanningService(
             optimizer=RouteOptimizer(HybridTravelMatrixProvider(self.settings)),
@@ -132,6 +143,7 @@ class PlatformApp:
             order_repo=OrderRepository(session),
             planning_repo=PlanningRepository(session),
             event_repo=EventRepository(session),
+            route_geometry_provider=self.route_geometry_provider,
         )
 
 
@@ -151,6 +163,7 @@ def bootstrap_platform(settings: PlatformSettings | None = None) -> PlatformApp:
         settings=settings,
         session_factory=session_factory,
         auth_service=AuthService(),
+        route_geometry_provider=HybridRouteGeometryProvider(settings),
     )
 
 

@@ -19,6 +19,12 @@ class TravelMatrixResult:
     metadata: dict[str, object]
 
 
+@dataclass(slots=True)
+class RouteGeometryResult:
+    points: list[tuple[float, float]]
+    metadata: dict[str, object]
+
+
 class TravelMatrixProvider(Protocol):
     """Provider interface for route travel times."""
 
@@ -33,6 +39,13 @@ class TravelMatrixProvider(Protocol):
         avoid_incidents: bool = True,
     ) -> TravelMatrixResult:
         """Build time and distance matrices."""
+
+
+class RouteGeometryProvider(Protocol):
+    """Provider interface for display geometry along roads."""
+
+    def build(self, waypoints: list[tuple[float, float]]) -> RouteGeometryResult:
+        """Return a polyline-like list of lat/lon points for the ordered waypoints."""
 
 
 class HaversineTravelMatrixProvider:
@@ -138,6 +151,16 @@ class HaversineTravelMatrixProvider:
         return multiplier
 
 
+class StraightLineRouteGeometryProvider:
+    """Fallback route geometry provider using raw waypoints."""
+
+    def build(self, waypoints: list[tuple[float, float]]) -> RouteGeometryResult:
+        return RouteGeometryResult(
+            points=waypoints[:],
+            metadata={"provider": "straight_line", "fallback_used": True},
+        )
+
+
 class OSRMTravelMatrixProvider:
     """OSRM matrix provider."""
 
@@ -197,6 +220,59 @@ class OSRMTravelMatrixProvider:
         )
 
 
+class OSRMRouteGeometryProvider:
+    """OSRM geometry provider for road-shaped route polylines."""
+
+    def __init__(self, settings: PlatformSettings):
+        self.settings = settings
+        self._cache: dict[tuple[float, ...], RouteGeometryResult] = {}
+
+    def build(self, waypoints: list[tuple[float, float]]) -> RouteGeometryResult:
+        if len(waypoints) < 2:
+            return RouteGeometryResult(
+                points=waypoints[:],
+                metadata={"provider": "osrm_route", "fallback_used": False, "point_count": len(waypoints)},
+            )
+        cache_key = tuple(round(value, 6) for point in waypoints for value in point)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if len(waypoints) > 100:
+            raise ValueError("OSRM route geometry supports at most 100 waypoints per request")
+        coordinates = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
+        profile = getattr(self.settings, "route_geometry_profile", "driving")
+        url = f"{self.settings.osrm_base_url}/route/v1/{profile}/{coordinates}"
+        response = requests.get(
+            url,
+            params={
+                "overview": "full",
+                "geometries": "geojson",
+                "steps": "false",
+                "continue_straight": "false",
+            },
+            timeout=4,
+        )
+        response.raise_for_status()
+        data = response.json()
+        routes = data.get("routes") or []
+        if not routes:
+            raise ValueError("OSRM response missing routes")
+        geometry = routes[0].get("geometry", {})
+        coordinates = geometry.get("coordinates") or []
+        if not coordinates:
+            raise ValueError("OSRM response missing geometry coordinates")
+        result = RouteGeometryResult(
+            points=[(lat, lon) for lon, lat in coordinates],
+            metadata={
+                "provider": "osrm_route",
+                "fallback_used": False,
+                "point_count": len(coordinates),
+            },
+        )
+        self._cache[cache_key] = result
+        return result
+
+
 class HybridTravelMatrixProvider:
     """OSRM first, deterministic fallback if external routing fails."""
 
@@ -245,5 +321,24 @@ class HybridTravelMatrixProvider:
                 consider_traffic=consider_traffic,
                 avoid_incidents=avoid_incidents,
             )
+            fallback.metadata["fallback_reason"] = type(exc).__name__
+            return fallback
+
+
+class HybridRouteGeometryProvider:
+    """OSRM road geometry first, straight-line fallback for reliability."""
+
+    def __init__(self, settings: PlatformSettings):
+        self.settings = settings
+        self.fallback = StraightLineRouteGeometryProvider()
+        self.osrm = OSRMRouteGeometryProvider(settings)
+
+    def build(self, waypoints: list[tuple[float, float]]) -> RouteGeometryResult:
+        if not getattr(self.settings, "use_road_geometry", True):
+            return self.fallback.build(waypoints)
+        try:
+            return self.osrm.build(waypoints)
+        except Exception as exc:
+            fallback = self.fallback.build(waypoints)
             fallback.metadata["fallback_reason"] = type(exc).__name__
             return fallback

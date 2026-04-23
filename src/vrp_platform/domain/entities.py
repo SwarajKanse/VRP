@@ -187,6 +187,7 @@ class RouteMapView:
     driver_id: str | None
     status: PlanStatus
     path_points: list[MapPoint] = field(default_factory=list)
+    stop_points: list[MapPoint] = field(default_factory=list)
     live_position: VehicleLivePosition | None = None
     traffic_delay_min: float = 0.0
     navigation_url: str = ""
@@ -213,6 +214,32 @@ class WarehouseRoutePlan:
     total_volume_m3: float
     utilization_pct: float
     instructions: list[WarehouseLoadInstruction] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class WarehouseDockView:
+    bay_label: str
+    route_id: str
+    vehicle_name: str
+    vehicle_category: VehicleCategory
+    departure_minute: float | None
+    readiness: str
+    utilization_pct: float
+    stop_count: int
+    priority_orders: int
+    note: str
+
+
+@dataclass(slots=True)
+class WarehouseSnapshot:
+    active_routes: int = 0
+    ready_bays: int = 0
+    attention_bays: int = 0
+    total_weight_kg: float = 0.0
+    total_volume_m3: float = 0.0
+    dock_views: list[WarehouseDockView] = field(default_factory=list)
+    route_plans: list[WarehouseRoutePlan] = field(default_factory=list)
+    issues: list["SolveIssueView"] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -314,6 +341,42 @@ class TimelineEvent:
 
 
 @dataclass(slots=True)
+class AuditView:
+    event_id: str
+    actor: str
+    action: str
+    entity_type: str
+    entity_id: str
+    occurred_at: datetime
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RouteInsightView:
+    route_id: str
+    vehicle_name: str
+    vehicle_category: VehicleCategory
+    depot_id: str
+    driver_id: str | None
+    status: PlanStatus
+    stop_count: int
+    total_distance_km: float
+    total_cost: float
+    total_energy_cost: float
+    fuel_used: float
+    traffic_delay_min: float
+    utilization_pct: float
+    duty_cycle_pct: float
+    eta_confidence_pct: float
+    priority_orders: int
+    issue_count: int
+    risk_score: float
+    risk_level: str
+    headline: str
+    suggested_action: str
+
+
+@dataclass(slots=True)
 class ShipmentSnapshot:
     order: Order
     route_id: str | None
@@ -322,6 +385,7 @@ class ShipmentSnapshot:
     stop_sequence: int | None
     eta_minute: float | None
     path_points: list[MapPoint] = field(default_factory=list)
+    stop_points: list[MapPoint] = field(default_factory=list)
     navigation_url: str = ""
     customer_events: list[TimelineEvent] = field(default_factory=list)
     delivery_events: list[TimelineEvent] = field(default_factory=list)
@@ -356,8 +420,26 @@ class DriverRouteView:
     total_break_min: float = 0.0
     break_windows: list[DriverBreakWindow] = field(default_factory=list)
     path_points: list[MapPoint] = field(default_factory=list)
+    stop_points: list[MapPoint] = field(default_factory=list)
     navigation_url: str = ""
     stops: list[DriverStopView] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class AdminSnapshot:
+    total_routes: int = 0
+    dispatched_routes: int = 0
+    optimization_runs: int = 0
+    open_issues: int = 0
+    fallback_runs: int = 0
+    total_distance_km: float = 0.0
+    total_energy_cost: float = 0.0
+    total_emissions_kg: float = 0.0
+    routes: list[RouteBoardEntry] = field(default_factory=list)
+    recent_runs: list[RunSummary] = field(default_factory=list)
+    issues: list[SolveIssueView] = field(default_factory=list)
+    audits: list[AuditView] = field(default_factory=list)
+    route_insights: list[RouteInsightView] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -375,3 +457,4 @@ class DispatcherSnapshot:
     fleet_positions: list[VehicleLivePosition] = field(default_factory=list)
     traffic_incidents: list[TrafficIncident] = field(default_factory=list)
     warehouse_plans: list[WarehouseRoutePlan] = field(default_factory=list)
+    route_insights: list[RouteInsightView] = field(default_factory=list)

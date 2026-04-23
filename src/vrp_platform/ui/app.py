@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime
 
 from nicegui import app, ui
 
 from vrp_platform.bootstrap import bootstrap_platform
 from vrp_platform.domain.entities import (
+    AdminSnapshot,
     DeliveryEvent,
     DispatcherSnapshot,
     DriverRouteView,
     MapPoint,
     ShipmentSnapshot,
     VehicleLivePosition,
+    WarehouseSnapshot,
 )
 from vrp_platform.domain.enums import DeliveryEventType, ObjectiveMode, OrderStatus, Role
 from vrp_platform.integrations.travel import HybridTravelMatrixProvider
 from vrp_platform.optimizer.engine import RouteOptimizer
 from vrp_platform.services.auth import UserContext
+from vrp_platform.ui.theme import apply_theme
 
 platform = bootstrap_platform()
 
@@ -35,73 +39,12 @@ SO-1006,Bhiwandi Bulk Hub,19.2813,73.0483,1800,2.80,1.80,1.80,30,660,900,Bhiwand
 ROUTE_COLORS = ["#ff7a00", "#145da0", "#1e8e5a", "#9a3412", "#5b21b6", "#0f766e"]
 ALL_ROLES = {Role.ADMIN, Role.DISPATCHER, Role.CUSTOMER, Role.DRIVER}
 DISPATCHER_ROLES = {Role.ADMIN, Role.DISPATCHER}
+WAREHOUSE_ROLES = {Role.ADMIN, Role.DISPATCHER}
+ADMIN_ROLES = {Role.ADMIN, Role.DISPATCHER}
 CUSTOMER_ROLES = {Role.ADMIN, Role.DISPATCHER, Role.CUSTOMER}
 DRIVER_ROLES = {Role.ADMIN, Role.DISPATCHER, Role.DRIVER}
 
-ui.add_head_html(
-    """
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-      :root {
-        --vrp-ink: #11243a;
-        --vrp-muted: #57718f;
-        --vrp-surface: rgba(255, 255, 255, 0.84);
-        --vrp-line: rgba(17, 36, 58, 0.12);
-        --vrp-accent: #ff7a00;
-        --vrp-accent-deep: #d45a00;
-        --vrp-success: #1e8e5a;
-        --vrp-warn: #c27803;
-        --vrp-danger: #b33a3a;
-        --vrp-bg-a: #fff8ea;
-        --vrp-bg-b: #dfefff;
-      }
-      body, .nicegui-content {
-        font-family: "Space Grotesk", "Segoe UI", sans-serif;
-        color: var(--vrp-ink);
-        background:
-          radial-gradient(circle at top left, rgba(255, 122, 0, 0.16), transparent 24rem),
-          radial-gradient(circle at top right, rgba(72, 145, 255, 0.18), transparent 28rem),
-          linear-gradient(180deg, var(--vrp-bg-a), var(--vrp-bg-b));
-      }
-      .vrp-shell {
-        max-width: 1440px;
-        margin: 0 auto;
-        padding: 1.4rem;
-      }
-      .vrp-panel {
-        background: var(--vrp-surface);
-        border: 1px solid var(--vrp-line);
-        border-radius: 22px;
-        box-shadow: 0 16px 48px rgba(17, 36, 58, 0.08);
-        backdrop-filter: blur(10px);
-      }
-      .vrp-hero {
-        background:
-          linear-gradient(135deg, rgba(255, 122, 0, 0.94), rgba(17, 36, 58, 0.92)),
-          linear-gradient(45deg, rgba(255, 255, 255, 0.12), transparent 70%);
-        color: white;
-        overflow: hidden;
-      }
-      .vrp-kpi-value, .vrp-mono {
-        font-family: "IBM Plex Mono", monospace;
-      }
-      .vrp-subtle {
-        color: var(--vrp-muted);
-      }
-      .vrp-pill {
-        border-radius: 999px;
-        padding: 0.22rem 0.7rem;
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: 0.03em;
-        background: rgba(17, 36, 58, 0.08);
-      }
-    </style>
-    """,
-    shared=True,
-)
+apply_theme()
 
 
 def _minutes_label(value: float | None) -> str:
@@ -129,13 +72,15 @@ def _store_user(user: UserContext) -> None:
 
 
 def _default_route_for(role: Role) -> str:
-    if role in DISPATCHER_ROLES:
+    if role == Role.ADMIN:
+        return "/admin"
+    if role == Role.DISPATCHER:
         return "/dispatcher"
     if role == Role.CUSTOMER:
         return "/customer"
     if role == Role.DRIVER:
         return "/driver"
-    return "/"
+    return "/dispatcher"
 
 
 def _logout() -> None:
@@ -160,9 +105,12 @@ def _require_roles(allowed: set[Role]) -> UserContext | None:
 def _render_session_bar(user: UserContext) -> None:
     with ui.row().classes("w-full items-center justify-between pb-2"):
         with ui.row().classes("gap-2"):
-            ui.button("Home", on_click=lambda: ui.navigate.to("/")).props("flat")
             if user.role in DISPATCHER_ROLES:
                 ui.button("Dispatcher", on_click=lambda: ui.navigate.to("/dispatcher")).props("flat")
+            if user.role in WAREHOUSE_ROLES:
+                ui.button("Warehouse", on_click=lambda: ui.navigate.to("/warehouse")).props("flat")
+            if user.role in ADMIN_ROLES:
+                ui.button("Admin", on_click=lambda: ui.navigate.to("/admin")).props("flat")
             if user.role in CUSTOMER_ROLES:
                 ui.button("Customer", on_click=lambda: ui.navigate.to("/customer")).props("flat")
             if user.role in DRIVER_ROLES:
@@ -170,6 +118,133 @@ def _render_session_bar(user: UserContext) -> None:
         with ui.row().classes("items-center gap-3"):
             ui.label(f"{user.username} · {user.role.value.replace('_', ' ').title()}").classes("vrp-pill")
             ui.button("Logout", on_click=_logout).props("flat")
+
+
+def _nav_sections_for(user: UserContext) -> list[tuple[str, str, str]]:
+    sections: list[tuple[str, str, str]] = []
+    if user.role in DISPATCHER_ROLES:
+        sections.append(("dispatcher", "Dispatcher", "/dispatcher"))
+    if user.role in WAREHOUSE_ROLES:
+        sections.append(("warehouse", "Warehouse", "/warehouse"))
+    if user.role in ADMIN_ROLES:
+        sections.append(("admin", "Admin", "/admin"))
+    if user.role in CUSTOMER_ROLES:
+        sections.append(("customer", "Customer", "/customer"))
+    if user.role in DRIVER_ROLES:
+        sections.append(("driver", "Driver", "/driver"))
+    return sections
+
+
+@contextmanager
+def _workspace_frame(
+    user: UserContext,
+    active_section: str,
+    eyebrow: str,
+    title: str,
+    subtitle: str,
+):
+    with ui.row().classes("vrp-shell vrp-workspace w-full gap-5"):
+        with ui.column().classes("vrp-rail"):
+            with ui.card().classes("vrp-rail-card p-5"):
+                ui.label("VRP Mission Grid").classes("text-2xl font-bold")
+                ui.label("Dispatch, load, route, deliver. One operational surface.").classes("text-sm opacity-80")
+                ui.separator().classes("opacity-20 my-2")
+                for section_id, label, route in _nav_sections_for(user):
+                    classes = "vrp-nav-button text-white"
+                    if section_id == active_section:
+                        classes += " vrp-nav-active"
+                    ui.button(label, on_click=lambda route=route: ui.navigate.to(route)).props("flat").classes(classes)
+                ui.separator().classes("opacity-20 my-2")
+                with ui.column().classes("gap-1 vrp-side-note"):
+                    ui.label(f"Signed in as {user.username}").classes("text-sm font-semibold")
+                    ui.label(user.role.value.replace("_", " ").title()).classes("text-xs opacity-80")
+                    ui.label("Use the rail to move across workspaces without losing context.").classes("text-xs opacity-70")
+            with ui.card().classes("vrp-rail-card p-5"):
+                ui.label("Operator Notes").classes("text-lg font-bold")
+                ui.label("Keep warehouse, dispatch, and driver state aligned. Optimize only after manifest integrity is clean.").classes("text-sm opacity-80")
+                ui.label("Escalate any route with high utilization, heavy incidents, or repeated failed attempts.").classes("text-sm opacity-80")
+
+        with ui.column().classes("vrp-stage flex-1 gap-5"):
+            with ui.card().classes("vrp-panel vrp-command p-7 w-full"):
+                _render_session_bar(user)
+                ui.label(eyebrow).classes("vrp-overline")
+                ui.label(title).classes("text-4xl font-bold")
+                ui.label(subtitle).classes("text-base opacity-80 max-w-5xl")
+            yield
+
+
+def _render_workspace_metrics(cards: list[tuple[str, str, str]]) -> None:
+    with ui.grid().classes("w-full grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4"):
+        for title, value, detail in cards:
+            with ui.card().classes("vrp-stat-card p-5"):
+                ui.label(title).classes("text-sm font-medium vrp-subtle")
+                ui.label(value).classes("vrp-kpi-value text-3xl font-bold")
+                ui.label(detail).classes("text-sm vrp-subtle")
+
+
+def _risk_class(level: str) -> str:
+    if level == "critical":
+        return "vrp-risk-critical"
+    if level == "watch":
+        return "vrp-risk-watch"
+    return "vrp-risk-stable"
+
+
+def _render_route_intelligence(title: str, insights) -> None:
+    with ui.card().classes("vrp-panel p-5"):
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label(title).classes("vrp-panel-title text-2xl")
+            ui.label("Route risk, duty pressure, utilization, ETA confidence, and next action").classes("text-sm vrp-subtle")
+        if not insights:
+            ui.label("No route intelligence is available yet. Create a run first.").classes("vrp-subtle mt-3")
+            return
+        with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-2 gap-4 mt-4"):
+            for insight in insights[:6]:
+                with ui.card().classes("vrp-insight-card p-5"):
+                    with ui.row().classes("vrp-insight-top w-full"):
+                        with ui.column().classes("gap-0"):
+                            ui.label(f"{insight.route_id} · {insight.vehicle_name}").classes("vrp-panel-title text-xl")
+                            ui.label(
+                                f"{insight.vehicle_category.value.replace('_', ' ').title()} · {insight.stop_count} stops · {insight.total_distance_km:.1f} km"
+                            ).classes("text-sm vrp-subtle")
+                        ui.label(insight.risk_level.title()).classes(f"vrp-pill {_risk_class(insight.risk_level)}")
+                    ui.label(insight.headline).classes("text-sm mt-2")
+                    with ui.grid().classes("w-full grid-cols-2 2xl:grid-cols-4 gap-3 mt-4"):
+                        stats = [
+                            ("Utilization", f"{insight.utilization_pct:.0f}%"),
+                            ("Duty Cycle", f"{insight.duty_cycle_pct:.0f}%"),
+                            ("ETA Confidence", f"{insight.eta_confidence_pct:.0f}%"),
+                            ("Risk Score", f"{insight.risk_score:.0f}"),
+                        ]
+                        for label, value in stats:
+                            with ui.column().classes("gap-0 vrp-data-chip"):
+                                ui.label(label).classes("text-[0.72rem] vrp-subtle")
+                                ui.label(value).classes("vrp-kpi-value text-lg font-semibold")
+                    with ui.column().classes("gap-2 mt-4"):
+                        for label, value in (
+                            ("Load Pressure", insight.utilization_pct),
+                            ("Duty Pressure", insight.duty_cycle_pct),
+                            ("Traffic Drag", min(100.0, insight.traffic_delay_min * 4.0)),
+                        ):
+                            with ui.column().classes("gap-1"):
+                                with ui.row().classes("w-full items-center justify-between"):
+                                    ui.label(label).classes("text-xs vrp-subtle")
+                                    ui.label(
+                                        f"{insight.traffic_delay_min:.0f} min"
+                                        if label == "Traffic Drag"
+                                        else f"{value:.0f}%"
+                                    ).classes("vrp-mono text-xs")
+                                with ui.element("div").classes("vrp-meter"):
+                                    ui.element("div").classes("vrp-meter-fill").style(f"width: {min(100.0, value):.1f}%")
+                    with ui.row().classes("w-full items-start justify-between mt-4"):
+                        with ui.row().classes("gap-2"):
+                            ui.label(f"Priority {insight.priority_orders}").classes("vrp-data-chip")
+                            ui.label(f"Issues {insight.issue_count}").classes("vrp-data-chip")
+                            ui.label(
+                                f"Fuel {insight.fuel_used:.1f} · Energy {insight.total_energy_cost:.2f}"
+                            ).classes("vrp-data-chip")
+                        ui.label(insight.status.value.title()).style(_status_tone(insight.status.value))
+                    ui.label(insight.suggested_action).classes("text-sm mt-3 font-medium")
 
 
 def _status_tone(status: str) -> str:
@@ -204,15 +279,28 @@ def _map_center(points: list[MapPoint]) -> tuple[float, float]:
     )
 
 
+def _map_layer(path_points: list[MapPoint], color: str, marker_points: list[MapPoint] | None = None):
+    return (path_points, color, marker_points or path_points)
+
+
 def _render_map(
     title: str,
-    paths: list[tuple[list[MapPoint], str]],
+    paths,
     live_positions: list[VehicleLivePosition] | None = None,
     incidents=None,
 ) -> None:
     live_positions = live_positions or []
     incidents = incidents or []
-    all_points = [point for path, _ in paths for point in path]
+    all_points: list[MapPoint] = []
+    normalized_paths: list[tuple[list[MapPoint], str, list[MapPoint]]] = []
+    for item in paths:
+        if len(item) == 2:
+            path_points, color = item
+            marker_points = path_points
+        else:
+            path_points, color, marker_points = item
+        normalized_paths.append((path_points, color, marker_points))
+        all_points.extend(marker_points or path_points)
     if not all_points:
         with ui.card().classes("vrp-panel p-5"):
             ui.label(title).classes("text-xl font-bold")
@@ -226,13 +314,13 @@ def _render_map(
             url_template="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
             options={"attribution": "&copy; OpenStreetMap contributors"},
         )
-        for path_points, color in paths:
+        for path_points, color, marker_points in normalized_paths:
             if len(path_points) >= 2:
                 leaflet.generic_layer(
                     name="polyline",
-                    args=[[(point.latitude, point.longitude) for point in path_points], {"color": color, "weight": 5}],
+                    args=[[(point.latitude, point.longitude) for point in path_points], {"color": color, "weight": 5, "opacity": 0.9}],
                 )
-            for point in path_points:
+            for point in marker_points:
                 leaflet.marker(latlng=(point.latitude, point.longitude), options={"title": point.label})
         for vehicle in live_positions:
             leaflet.marker(
@@ -463,7 +551,7 @@ def _render_shipment_snapshot(snapshot: ShipmentSnapshot) -> None:
                     ui.label(value).classes("vrp-kpi-value text-xl font-semibold")
         if snapshot.navigation_url:
             ui.link("Open navigation", snapshot.navigation_url, new_tab=True).classes("mt-3")
-        _render_map("Shipment Route", [(snapshot.path_points, ROUTE_COLORS[0])])
+        _render_map("Shipment Route", [_map_layer(snapshot.path_points, ROUTE_COLORS[0], snapshot.stop_points)])
         with ui.grid().classes("w-full grid-cols-1 lg:grid-cols-2 gap-4 mt-4"):
             with ui.card().classes("bg-white/80 shadow-none border border-[rgba(17,36,58,0.08)]"):
                 ui.label("Customer Timeline").classes("text-lg font-bold")
@@ -497,7 +585,140 @@ def _render_driver_route(route_view: DriverRouteView) -> None:
                 ui.label(
                     f"{_minutes_label(item.start_minute)} · {item.duration_min:.0f} min · {item.reason}"
                 ).classes("text-sm")
-    _render_map("Driver Route Map", [(route_view.path_points, ROUTE_COLORS[1])])
+    _render_map("Driver Route Map", [_map_layer(route_view.path_points, ROUTE_COLORS[1], route_view.stop_points)])
+
+
+def _render_dispatcher_brief(snapshot: DispatcherSnapshot) -> None:
+    _render_workspace_metrics(
+        [
+            ("Demand In View", str(snapshot.filtered_order_count), "Orders matching the current planning lens"),
+            ("Routes Live", str(len(snapshot.routes)), "Current board entries available to dispatch"),
+            ("Warehouse Plans", str(len(snapshot.warehouse_plans)), "Load sheets generated from the latest runs"),
+            ("Issues", str(len(snapshot.issues)), "Open warnings and unassigned orders requiring action"),
+        ]
+    )
+
+
+def _readiness_tone(readiness: str) -> str:
+    if readiness == "ready":
+        return "vrp-tone-ready"
+    if readiness == "expedite":
+        return "vrp-tone-warn"
+    return "vrp-tone-danger"
+
+
+def _render_warehouse_overview(snapshot: WarehouseSnapshot) -> None:
+    _render_workspace_metrics(
+        [
+            ("Active Bays", str(snapshot.active_routes), "Routes currently staged for loading"),
+            ("Ready Bays", str(snapshot.ready_bays), "Docks clear to begin fill sequence"),
+            ("Attention Bays", str(snapshot.attention_bays), "Loads needing supervisor review"),
+            ("Load Volume", f"{snapshot.total_volume_m3:.1f} m3", "Aggregated cube across staged trucks"),
+        ]
+    )
+    with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-3 gap-4"):
+        for dock in snapshot.dock_views:
+            with ui.card().classes("vrp-panel p-5"):
+                with ui.row().classes("w-full items-start justify-between"):
+                    with ui.column().classes("gap-0"):
+                        ui.label(f"{dock.bay_label} · {dock.vehicle_name}").classes("text-xl font-bold")
+                        ui.label(
+                            f"{dock.vehicle_category.value.replace('_', ' ').title()} · {dock.stop_count} loads · Departure {_minutes_label(dock.departure_minute)}"
+                        ).classes("text-sm vrp-subtle")
+                    ui.label(dock.readiness.title()).classes(f"text-sm font-bold {_readiness_tone(dock.readiness)}")
+                ui.label(
+                    f"Utilization {dock.utilization_pct:.0f}% · Priority orders {dock.priority_orders}"
+                ).classes("text-sm vrp-subtle mt-2")
+                ui.label(dock.note).classes("text-sm mt-2")
+
+
+def _render_admin_overview(snapshot: AdminSnapshot) -> None:
+    _render_workspace_metrics(
+        [
+            ("Optimization Runs", str(snapshot.optimization_runs), "Recent solve runs retained in the platform"),
+            ("Dispatched Routes", str(snapshot.dispatched_routes), "Routes currently assigned to drivers"),
+            ("Fallback Usage", str(snapshot.fallback_runs), "Runs recovered from primary optimizer failure"),
+            ("Energy Cost", f"{snapshot.total_energy_cost:.2f}", "Aggregate energy spend on current visible routes"),
+        ]
+    )
+    with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-2 gap-4"):
+        with ui.card().classes("vrp-panel p-5"):
+            ui.label("Operational Audit Trail").classes("text-xl font-bold")
+            if not snapshot.audits:
+                ui.label("No audit entries yet.").classes("vrp-subtle")
+            for audit in snapshot.audits[:12]:
+                with ui.row().classes("w-full items-start justify-between py-2 border-b border-[rgba(17,36,58,0.08)]"):
+                    with ui.column().classes("gap-0"):
+                        ui.label(f"{audit.actor} · {audit.action}").classes("font-semibold")
+                        ui.label(f"{audit.entity_type} · {audit.entity_id}").classes("text-sm vrp-subtle")
+                    ui.label(audit.occurred_at.strftime("%Y-%m-%d %H:%M")).classes("vrp-mono text-sm")
+        with ui.card().classes("vrp-panel p-5"):
+            ui.label("Run Reliability").classes("text-xl font-bold")
+            ui.label(
+                f"Visible distance {snapshot.total_distance_km:.1f} km · Emissions {snapshot.total_emissions_kg:.2f} kg · Issues {snapshot.open_issues}"
+            ).classes("text-sm vrp-subtle")
+            for run in snapshot.recent_runs[:10]:
+                ui.label(
+                    f"{run.run_id} · {run.objective.value} · {run.route_count} routes · {run.unassigned_count} unassigned"
+                ).classes("text-sm py-1")
+
+
+def _render_issue_list(title: str, issues) -> None:
+    with ui.card().classes("vrp-panel p-5"):
+        ui.label(title).classes("text-xl font-bold")
+        if not issues:
+            ui.label("No active issues in this workspace.").classes("vrp-subtle")
+            return
+        for issue in issues[:12]:
+            tone = "var(--vrp-danger)" if issue.severity == "error" else "var(--vrp-warn)"
+            with ui.row().classes("w-full items-start justify-between py-2 border-b border-[rgba(17,36,58,0.08)]"):
+                with ui.column().classes("gap-0"):
+                    ui.label(issue.code.replace("_", " ")).classes("font-semibold")
+                    ui.label(issue.message).classes("text-sm vrp-subtle")
+                    if issue.order_id:
+                        ui.label(f"Order {issue.order_id}").classes("text-xs vrp-subtle")
+                ui.label(issue.issue_kind.replace("_", " ").title()).style(f"color: {tone};")
+
+
+def _render_warehouse_load_sequences(snapshot: WarehouseSnapshot) -> None:
+    with ui.card().classes("vrp-panel p-5"):
+        ui.label("Truck Fill Instructions").classes("text-xl font-bold")
+        ui.label("Each load sheet is sequenced in reverse stop order so the next drop is the most accessible in the truck.").classes("text-sm vrp-subtle")
+        if not snapshot.route_plans:
+            ui.label("No staged route plans available for the warehouse.").classes("vrp-subtle mt-3")
+            return
+        for plan in snapshot.route_plans[:8]:
+            with ui.card().classes("bg-white/80 shadow-none border border-[rgba(17,36,58,0.08)] mt-3"):
+                with ui.row().classes("w-full items-start justify-between"):
+                    with ui.column().classes("gap-0"):
+                        ui.label(f"{plan.vehicle_name} · {plan.route_id}").classes("font-semibold")
+                        ui.label(
+                            f"{plan.vehicle_category.value.replace('_', ' ').title()} · {len(plan.instructions)} slots · {plan.total_weight_kg:.0f} kg · {plan.total_volume_m3:.2f} m3"
+                        ).classes("text-sm vrp-subtle")
+                    ui.label(f"{plan.utilization_pct:.0f}% full").classes("vrp-pill")
+                for instruction in plan.instructions[:7]:
+                    ui.label(
+                        f"Load #{instruction.load_sequence} -> Stop {instruction.stop_sequence} -> {instruction.external_ref} -> {instruction.slot_label} -> {instruction.notes}"
+                    ).classes("text-sm py-1")
+
+
+def _render_admin_route_watch(snapshot: AdminSnapshot) -> None:
+    with ui.card().classes("vrp-panel p-5"):
+        ui.label("Fleet And Route Watch").classes("text-xl font-bold")
+        if not snapshot.routes:
+            ui.label("No routes are currently visible in the admin view.").classes("vrp-subtle")
+            return
+        for route in snapshot.routes[:12]:
+            with ui.row().classes("w-full items-start justify-between py-2 border-b border-[rgba(17,36,58,0.08)]"):
+                with ui.column().classes("gap-0"):
+                    ui.label(f"{route.route_id} · {route.vehicle_name}").classes("font-semibold")
+                    ui.label(
+                        f"{route.vehicle_category.value.replace('_', ' ').title()} · {route.stop_count} stops · ETA {_minutes_label(route.first_eta_minute)}"
+                    ).classes("text-sm vrp-subtle")
+                    ui.label(
+                        f"Cost {route.total_cost:.2f} · Energy {route.total_energy_cost:.2f} · Fuel {route.fuel_used:.1f}"
+                    ).classes("text-sm vrp-subtle")
+                ui.label(route.status.value.title()).style(_status_tone(route.status.value))
 
 
 @ui.page("/login")
@@ -543,30 +764,11 @@ def login_page() -> None:
 
 @ui.page("/")
 def home() -> None:
-    user = _require_roles(ALL_ROLES)
+    user = _current_user()
     if user is None:
+        ui.navigate.to("/login")
         return
-    with ui.column().classes("vrp-shell w-full gap-6"):
-        with ui.card().classes("vrp-panel vrp-hero p-8 w-full"):
-            _render_session_bar(user)
-            ui.label("VRP Control Tower").classes("text-4xl font-bold")
-            ui.label(
-                "Fleet-aware route optimization with warehouse loading, live traffic overlays, and driver execution flow."
-            ).classes("text-lg opacity-90")
-            with ui.row().classes("gap-3 mt-4"):
-                ui.button("Dispatcher", on_click=lambda: ui.navigate.to("/dispatcher")).props("color=white text-color=dark")
-                ui.button("Customer Portal", on_click=lambda: ui.navigate.to("/customer")).props("outline color=white")
-                ui.button("Driver Workflow", on_click=lambda: ui.navigate.to("/driver")).props("outline color=white")
-        with ui.grid().classes("w-full grid-cols-1 md:grid-cols-3 gap-4"):
-            panels = [
-                ("Control Tower", "Optimize mixed fleets, watch live routes, and act on traffic and exception signals."),
-                ("Warehouse", "Turn routes into truck-specific loading sheets with stop-aware fill order."),
-                ("Driver Execution", "Give each driver a route map, stop sequence, and break-aware duty plan."),
-            ]
-            for title, detail in panels:
-                with ui.card().classes("vrp-panel p-5"):
-                    ui.label(title).classes("text-xl font-bold")
-                    ui.label(detail).classes("vrp-subtle")
+    ui.navigate.to(_default_route_for(user.role))
 
 
 @ui.page("/dispatcher")
@@ -574,13 +776,13 @@ def dispatcher_page() -> None:
     user = _require_roles(DISPATCHER_ROLES)
     if user is None:
         return
-    with ui.column().classes("vrp-shell w-full gap-6"):
-        with ui.card().classes("vrp-panel vrp-hero p-7 w-full"):
-            _render_session_bar(user)
-            ui.label("Dispatcher Control Tower").classes("text-3xl font-bold")
-            ui.label(
-                "Run fuel-aware planning, watch the live route picture, and hand the warehouse an actual truck fill plan."
-            ).classes("text-base opacity-90")
+    with _workspace_frame(
+        user,
+        "dispatcher",
+        "Dispatcher Workbench",
+        "Dispatcher Control Tower",
+        "Run fuel-aware planning, watch the live route picture, control incident response, and hand the warehouse a truck-specific fill plan.",
+    ):
 
         dashboard = ui.column().classes("w-full gap-4")
         comparison = ui.grid().classes("w-full grid-cols-1 md:grid-cols-3 gap-4")
@@ -689,7 +891,7 @@ def dispatcher_page() -> None:
                 _render_map(
                     "Live Route Map",
                     [
-                        (route.path_points, ROUTE_COLORS[index % len(ROUTE_COLORS)])
+                        _map_layer(route.path_points, ROUTE_COLORS[index % len(ROUTE_COLORS)], route.stop_points)
                         for index, route in enumerate(snapshot.map_routes[:6])
                     ],
                     snapshot.fleet_positions,
@@ -706,6 +908,7 @@ def dispatcher_page() -> None:
                         next_page,
                     )
                     _render_route_board(snapshot, refresh_dashboard)
+                _render_route_intelligence("Dispatcher Route Intelligence", snapshot.route_insights)
                 with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-2 gap-4"):
                     _render_traffic_panel(snapshot)
                     _render_warehouse_plans(snapshot)
@@ -948,18 +1151,161 @@ def dispatcher_page() -> None:
         refresh_dashboard()
 
 
+@ui.page("/warehouse")
+def warehouse_page() -> None:
+    user = _require_roles(WAREHOUSE_ROLES)
+    if user is None:
+        return
+    with _workspace_frame(
+        user,
+        "warehouse",
+        "Warehouse Operations",
+        "Warehouse Floor",
+        "Turn route plans into disciplined truck-fill execution with dock readiness, stop-aware load sequence, and supervisor exception handling.",
+    ):
+        stage = ui.column().classes("w-full gap-4")
+
+        def refresh() -> None:
+            snapshot = platform.warehouse_snapshot()
+            dispatcher_snapshot = platform.dispatcher_snapshot(page_size=8)
+            stage.clear()
+            with stage:
+                _render_warehouse_overview(snapshot)
+                with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-4"):
+                    _render_map(
+                        "Dock Release Map",
+                        [
+                            _map_layer(route.path_points, ROUTE_COLORS[index % len(ROUTE_COLORS)], route.stop_points)
+                            for index, route in enumerate(dispatcher_snapshot.map_routes[:6])
+                        ],
+                        dispatcher_snapshot.fleet_positions,
+                        dispatcher_snapshot.traffic_incidents,
+                    )
+                    with ui.column().classes("gap-4"):
+                        with ui.card().classes("vrp-panel p-5"):
+                            ui.label("Staging Summary").classes("text-xl font-bold")
+                            ui.label(
+                                f"{snapshot.total_weight_kg:.0f} kg across {snapshot.active_routes} staged routes and {snapshot.total_volume_m3:.2f} m3 of cube."
+                            ).classes("text-sm vrp-subtle")
+                            ui.label(
+                                "Clear ready bays first, expedite priority loads next, and hold attention bays for dock review."
+                            ).classes("text-sm mt-2")
+                        with ui.card().classes("vrp-panel p-5"):
+                            ui.label("Bay Queue").classes("text-xl font-bold")
+                            if not snapshot.dock_views:
+                                ui.label("No bay allocations exist yet.").classes("vrp-subtle")
+                            for dock in snapshot.dock_views[:8]:
+                                with ui.row().classes("w-full items-start justify-between py-2 border-b border-[rgba(17,36,58,0.08)]"):
+                                    with ui.column().classes("gap-0"):
+                                        ui.label(f"{dock.bay_label} · {dock.vehicle_name}").classes("font-semibold")
+                                        ui.label(
+                                            f"Departure {_minutes_label(dock.departure_minute)} · Utilization {dock.utilization_pct:.0f}%"
+                                        ).classes("text-sm vrp-subtle")
+                                    ui.label(dock.readiness.title()).classes(f"text-sm font-bold {_readiness_tone(dock.readiness)}")
+                with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] gap-4"):
+                    with ui.card().classes("vrp-panel p-5"):
+                        ui.label("Dock Readiness Board").classes("text-xl font-bold")
+                        if not snapshot.dock_views:
+                            ui.label("No routes are currently staged for the warehouse.").classes("vrp-subtle")
+                        for dock in snapshot.dock_views:
+                            with ui.card().classes("bg-white/80 shadow-none border border-[rgba(17,36,58,0.08)] mt-3"):
+                                with ui.row().classes("w-full items-start justify-between"):
+                                    with ui.column().classes("gap-0"):
+                                        ui.label(f"{dock.bay_label} · {dock.route_id}").classes("font-semibold")
+                                        ui.label(
+                                            f"{dock.vehicle_name} · {dock.vehicle_category.value.replace('_', ' ').title()} · {dock.stop_count} drops"
+                                        ).classes("text-sm vrp-subtle")
+                                    ui.label(dock.readiness.title()).classes(f"text-sm font-bold {_readiness_tone(dock.readiness)}")
+                                ui.label(dock.note).classes("text-sm mt-2")
+                    _render_warehouse_load_sequences(snapshot)
+                with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-2 gap-4"):
+                    _render_issue_list("Warehouse Exceptions", snapshot.issues)
+                    with ui.card().classes("vrp-panel p-5"):
+                        ui.label("Release Rules").classes("text-xl font-bold")
+                        ui.label("1. Freeze sequence after supervisor release.").classes("text-sm py-1")
+                        ui.label("2. Re-check fragile and orientation-locked freight before sealing the truck.").classes("text-sm py-1")
+                        ui.label("3. Priority orders load first only when they are earliest route drops.").classes("text-sm py-1")
+                        ui.label("4. Escalate any bay above 92% utilization or with unresolved incidents.").classes("text-sm py-1")
+
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label("Warehouse execution updates in one surface.").classes("vrp-subtle")
+            ui.button("Refresh Warehouse State", on_click=refresh).props("outline color=primary")
+        refresh()
+
+
+@ui.page("/admin")
+def admin_page() -> None:
+    user = _require_roles(ADMIN_ROLES)
+    if user is None:
+        return
+    with _workspace_frame(
+        user,
+        "admin",
+        "Operational Oversight",
+        "Admin Pulse",
+        "Track route reliability, audit activity, fallback usage, energy cost, and open exceptions across the live operating picture.",
+    ):
+        stage = ui.column().classes("w-full gap-4")
+
+        def refresh() -> None:
+            snapshot = platform.admin_snapshot()
+            dispatcher_snapshot = platform.dispatcher_snapshot(page_size=8)
+            stage.clear()
+            with stage:
+                _render_admin_overview(snapshot)
+                with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-4"):
+                    _render_map(
+                        "Admin Network Watch",
+                        [
+                            _map_layer(route.path_points, ROUTE_COLORS[index % len(ROUTE_COLORS)], route.stop_points)
+                            for index, route in enumerate(dispatcher_snapshot.map_routes[:6])
+                        ],
+                        dispatcher_snapshot.fleet_positions,
+                        dispatcher_snapshot.traffic_incidents,
+                    )
+                    with ui.column().classes("gap-4"):
+                        with ui.card().classes("vrp-panel p-5"):
+                            ui.label("Reliability Summary").classes("text-xl font-bold")
+                            ui.label(
+                                f"{snapshot.optimization_runs} runs retained · {snapshot.fallback_runs} fallback recoveries · {snapshot.open_issues} open issues."
+                            ).classes("text-sm vrp-subtle")
+                            ui.label(
+                                f"Distance {snapshot.total_distance_km:.1f} km · Energy {snapshot.total_energy_cost:.2f} · Emissions {snapshot.total_emissions_kg:.2f} kg."
+                            ).classes("text-sm vrp-subtle mt-2")
+                        with ui.card().classes("vrp-panel p-5"):
+                            ui.label("Incident Pulse").classes("text-xl font-bold")
+                            if not dispatcher_snapshot.traffic_incidents:
+                                ui.label("No active traffic overlays in the current planning horizon.").classes("vrp-subtle")
+                            for incident in dispatcher_snapshot.traffic_incidents:
+                                ui.label(
+                                    f"{incident.name} · {incident.severity.title()} · Delay x{incident.delay_multiplier:.2f}"
+                                ).classes("text-sm py-1")
+                with ui.grid().classes("w-full grid-cols-1 xl:grid-cols-[0.95fr_1.05fr] gap-4"):
+                    _render_admin_route_watch(snapshot)
+                    _render_issue_list("Cross-System Exceptions", snapshot.issues)
+                _render_route_intelligence("Admin Route Intelligence", snapshot.route_insights)
+
+        with ui.row().classes("w-full items-center justify-between"):
+            ui.label("Admin view stays focused on reliability, cost, and auditability.").classes("vrp-subtle")
+            ui.button("Refresh Admin Pulse", on_click=refresh).props("outline color=primary")
+        refresh()
+
+
 @ui.page("/customer")
 def customer_page() -> None:
     user = _require_roles(CUSTOMER_ROLES)
     if user is None:
         return
-    with ui.column().classes("vrp-shell w-full gap-6"):
-        with ui.card().classes("vrp-panel vrp-hero p-7 w-full"):
-            _render_session_bar(user)
-            ui.label("Customer Portal").classes("text-3xl font-bold")
-            ui.label(
-                "Resolve a shipment by reference and show the exact route context, ETA, timeline, and map."
-            ).classes("text-base opacity-90")
+    with _workspace_frame(
+        user,
+        "customer",
+        "Customer Experience",
+        "Customer Portal",
+        "Resolve a shipment by reference and show the route context, ETA, timeline, and live map without exposing dispatcher complexity.",
+    ):
+        with ui.card().classes("vrp-panel p-5"):
+            ui.label("Shipment Lookup").classes("text-xl font-bold")
+            ui.label("Use the operational order reference to resolve a shipment with live route context.").classes("text-sm vrp-subtle")
         reference = ui.input("Shipment reference", value="SO-1001").classes("w-80")
         results = ui.column().classes("w-full gap-4")
 
@@ -977,7 +1323,10 @@ def customer_page() -> None:
 
         with ui.row().classes("gap-3"):
             ui.button("Lookup Shipment", on_click=lookup).props("color=primary")
-            ui.button("Back", on_click=lambda: ui.navigate.to("/")).props("flat")
+            if user.role == Role.ADMIN:
+                ui.button("Open Admin", on_click=lambda: ui.navigate.to("/admin")).props("flat")
+            elif user.role in DISPATCHER_ROLES:
+                ui.button("Open Dispatcher", on_click=lambda: ui.navigate.to("/dispatcher")).props("flat")
         lookup()
 
 
@@ -986,13 +1335,16 @@ def driver_page() -> None:
     user = _require_roles(DRIVER_ROLES)
     if user is None:
         return
-    with ui.column().classes("vrp-shell w-full gap-6"):
-        with ui.card().classes("vrp-panel vrp-hero p-7 w-full"):
-            _render_session_bar(user)
-            ui.label("Driver Workflow").classes("text-3xl font-bold")
-            ui.label(
-                "Load the assigned route, follow the map, and keep the driver inside break and duty limits."
-            ).classes("text-base opacity-90")
+    with _workspace_frame(
+        user,
+        "driver",
+        "Driver Execution",
+        "Driver Workflow",
+        "Load the assigned route, follow the map, execute each stop, and stay inside break and duty limits.",
+    ):
+        with ui.card().classes("vrp-panel p-5"):
+            ui.label("Route Loader").classes("text-xl font-bold")
+            ui.label("Load the route assigned to the driver identity below and record execution events stop by stop.").classes("text-sm vrp-subtle")
         driver_input = ui.input("Driver ID", value=platform.settings.driver_demo_id).classes("w-72")
         route_container = ui.column().classes("w-full gap-4")
 
@@ -1049,7 +1401,10 @@ def driver_page() -> None:
 
         with ui.row().classes("gap-3"):
             ui.button("Load Assigned Route", on_click=load_route).props("color=primary")
-            ui.button("Back", on_click=lambda: ui.navigate.to("/")).props("flat")
+            if user.role == Role.ADMIN:
+                ui.button("Open Admin", on_click=lambda: ui.navigate.to("/admin")).props("flat")
+            elif user.role in DISPATCHER_ROLES:
+                ui.button("Open Dispatcher", on_click=lambda: ui.navigate.to("/dispatcher")).props("flat")
         load_route()
 
 

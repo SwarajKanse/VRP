@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import csv
 import io
-import uuid
-
 from vrp_platform.domain.entities import Order
 from vrp_platform.repos.orders import OrderRepository
 
@@ -59,9 +57,10 @@ class IngestionService:
         width = float(row["width_m"])
         height = float(row["height_m"])
         volume = round(length * width * height, 6)
+        external_ref = row["order_id"].strip()
         return Order(
-            id=row.get("id") or f"ord-{uuid.uuid4().hex[:10]}",
-            external_ref=row["order_id"],
+            id=row.get("id") or external_ref,
+            external_ref=external_ref,
             customer_name=row["customer_name"],
             latitude=float(row["lat"]),
             longitude=float(row["lon"]),

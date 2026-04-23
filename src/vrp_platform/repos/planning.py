@@ -137,8 +137,10 @@ class PlanningRepository:
     def list_route_board(self, limit: int = 20) -> list[RouteBoardEntry]:
         stmt = (
             select(RoutePlanRecord)
+            .join(OrderRecord, OrderRecord.route_plan_id == RoutePlanRecord.id)
             .join(SolveRunRecord, SolveRunRecord.id == RoutePlanRecord.solve_run_id)
             .options(selectinload(RoutePlanRecord.stops))
+            .distinct()
             .order_by(SolveRunRecord.created_at.desc())
             .limit(limit)
         )
@@ -205,7 +207,9 @@ class PlanningRepository:
     def list_recent_route_plans(self, limit: int = 10) -> list[RoutePlan]:
         stmt = (
             select(RoutePlanRecord)
+            .join(OrderRecord, OrderRecord.route_plan_id == RoutePlanRecord.id)
             .join(SolveRunRecord, SolveRunRecord.id == RoutePlanRecord.solve_run_id)
+            .distinct()
             .order_by(SolveRunRecord.created_at.desc())
             .limit(limit)
         )
@@ -221,9 +225,11 @@ class PlanningRepository:
     def get_active_route_for_driver(self, driver_id: str) -> RoutePlan | None:
         stmt = (
             select(RoutePlanRecord)
+            .join(OrderRecord, OrderRecord.route_plan_id == RoutePlanRecord.id)
             .join(SolveRunRecord, SolveRunRecord.id == RoutePlanRecord.solve_run_id)
             .where(RoutePlanRecord.assigned_driver_id == driver_id)
             .where(RoutePlanRecord.status.in_([PlanStatus.OPTIMIZED, PlanStatus.DISPATCHED]))
+            .distinct()
             .order_by(SolveRunRecord.created_at.desc())
         )
         route_row = self.session.scalars(stmt).first()

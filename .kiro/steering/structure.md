@@ -3,26 +3,58 @@
 ## Directory Layout
 
 ```
-vrp-solver/
+vrp-platform/
 ├── .kiro/
-│   ├── specs/                    # Feature specifications
+│   ├── specs/                    # Feature specifications (legacy)
 │   └── steering/                 # AI assistant guidance documents
-├── dashboard/
-│   ├── app.py                    # Main Streamlit dashboard
-│   ├── csv_parser.py             # CSV manifest parser
-│   ├── financial_engine.py       # Cost calculations
-│   ├── fleet_composer.py         # Fleet management
-│   ├── packing_engine.py         # Bin packing algorithms
-│   └── ...                       # Other dashboard modules
+├── src/
+│   └── vrp_platform/
+│       ├── domain/               # Domain entities and enums
+│       │   ├── entities.py       # Order, Vehicle, Depot, Route, etc.
+│       │   └── enums.py          # Status codes and type enums
+│       ├── optimizer/            # Route optimization engine
+│       │   ├── engine.py         # Main optimizer with regret insertion
+│       │   ├── objectives.py    # Objective function scoring
+│       │   └── fallback.py      # Fallback strategies
+│       ├── repos/                # Data persistence layer
+│       │   ├── models.py         # SQLAlchemy models
+│       │   ├── catalog.py        # Vehicles, depots, drivers
+│       │   ├── orders.py         # Order management
+│       │   ├── planning.py       # Routes and assignments
+│       │   └── events.py         # Audit trail
+│       ├── services/             # Business logic services
+│       │   ├── planning.py       # Optimization orchestration
+│       │   ├── ingestion.py      # Manifest processing
+│       │   ├── operations.py     # Route execution
+│       │   ├── manifests.py      # Manifest generation
+│       │   ├── auth.py           # User management
+│       │   └── events.py         # Event logging
+│       ├── integrations/         # External integrations
+│       │   └── travel.py         # Travel matrix providers
+│       ├── ui/                   # NiceGUI web application
+│       │   ├── app.py            # Main application entry point
+│       │   └── theme.py          # UI theme configuration
+│       ├── workers/              # Background job processing
+│       │   ├── queue.py          # Queue management
+│       │   └── tasks.py          # Task definitions
+│       ├── bootstrap.py          # Application bootstrap
+│       ├── config.py             # Configuration management
+│       ├── db.py                 # Database initialization
+│       └── logging.py            # Logging configuration
 ├── tests/
-│   ├── test_solver.py            # VRP solver tests
-│   ├── test_packing_algorithm.py # Packing tests
-│   └── ...                       # Other test files
-├── vrp_core.py                   # Pure Python VRP solver module
+│   └── platform/                 # Platform integration tests
+│       ├── test_optimizer_platform.py
+│       ├── test_platform_operations.py
+│       ├── test_resilience_and_auth.py
+│       └── test_travel_and_loading.py
+├── var/                          # Runtime data
+│   └── vrp_platform.db           # SQLite database (dev)
 ├── test_installation.py          # Installation verification
-├── setup.py                      # Setup script
-├── setup.bat / setup.sh          # Platform-specific setup scripts
+├── setup.bat / setup.sh          # Platform setup scripts
+├── run_dashboard.bat / run_dashboard.sh  # Quick launchers
+├── pyproject.toml                # Project configuration
 ├── requirements.txt              # Python dependencies
+├── sample_manifest.csv           # Example intake file
 └── *.md                          # Documentation files
 ```
 
@@ -30,78 +62,150 @@ vrp-solver/
 
 ### Core Implementation
 
-- **vrp_core.py**: Pure Python VRP solver module containing:
-  - `Location`: Geographic coordinate dataclass
-  - `Customer`: Delivery point dataclass with demand and time windows
-  - `VRPSolver`: Main solver class with nearest neighbor heuristic
-  - `haversine_distance()`: Geographic distance utility function
+- **src/vrp_platform/optimizer/engine.py**: Pure Python VRP optimizer
+  - `RouteOptimizer`: Main optimizer class with regret insertion and local search
+  - Multi-depot assignment logic
+  - Feasibility checking and constraint validation
+  - Local search operators: 2-opt, relocate, swap, cross-exchange
+  - Route metrics calculation (distance, time, cost, emissions)
 
-### Dashboard
+- **src/vrp_platform/domain/entities.py**: Domain model
+  - `Order`: Delivery order with location, demand, time windows
+  - `Vehicle`: Vehicle with capacity, speed, fuel type, dimensions
+  - `Depot`: Depot location with operating hours
+  - `Route`: Planned route with stops and metrics
+  - `SolveRequest` / `SolveResponse`: Optimization API
 
-- **dashboard/app.py**: Main Streamlit application entry point
-- **dashboard/csv_parser.py**: Parses delivery manifest CSV files
-- **dashboard/financial_engine.py**: Calculates routing costs and metrics
-- **dashboard/fleet_composer.py**: Manages vehicle fleet configuration
-- **dashboard/packing_engine.py**: Bin packing algorithms for cargo loading
+- **src/vrp_platform/services/planning.py**: Planning orchestration
+  - Coordinates optimization runs
+  - Manages scenario creation and comparison
+  - Handles route assignment and publishing
+
+### Web Application
+
+- **src/vrp_platform/ui/app.py**: NiceGUI application
+  - Multi-workspace routing (dispatcher, warehouse, driver, customer, admin)
+  - Reactive UI components
+  - Map visualizations
+  - Real-time updates
+
+### Data Persistence
+
+- **src/vrp_platform/repos/models.py**: SQLAlchemy models
+  - Database schema definitions
+  - Relationships and constraints
+  - Indexes for query performance
 
 ### Testing
 
-- **tests/test_solver.py**: Primary test suite with pytest and hypothesis
-- **tests/test_*.py**: Additional test modules for various components
-- **test_installation.py**: Quick verification script
+- **tests/platform/**: Integration test suite
+  - Property-based tests with hypothesis
+  - End-to-end workflow tests
+  - Resilience and error handling tests
 
 ### Configuration
 
-- **requirements.txt**: Python package dependencies
-- **setup.py**: Installation script
-- **.gitignore**: Git ignore patterns
+- **pyproject.toml**: Modern Python project configuration
+- **src/vrp_platform/config.py**: Environment-based settings with pydantic
+- **test_installation.py**: Quick verification script
 
 ## Architecture Layers
 
-### Layer 1: Data Structures (vrp_core.py)
+### Layer 1: Domain Model (domain/)
 
-- `Location`: Geographic coordinates (latitude, longitude)
-- `Customer`: Delivery point with demand, time windows, and service time
-- `Route`: Type alias for `list[int]` (customer IDs)
+Pure business entities with no infrastructure dependencies:
+- `Order`, `Vehicle`, `Depot`, `Route`, `Stop`, `RouteLeg`
+- `SolveRequest`, `SolveResponse`, `Violation`
+- `ConstraintSet`, `ObjectiveWeights`
+- Status enums and type codes
 
-### Layer 2: Core Solver (vrp_core.py)
+### Layer 2: Optimizer (optimizer/)
 
-- `VRPSolver.solve()`: Main entry point
-- `VRPSolver._build_distance_matrix()`: Precompute Euclidean distances
-- `VRPSolver._nearest_neighbor_heuristic()`: Route construction algorithm
-- `VRPSolver._can_add_to_route()`: Constraint validation
-- `haversine_distance()`: Geographic distance calculation
+Route construction and improvement algorithms:
+- Regret insertion heuristic for initial solution
+- Local search operators (2-opt, relocate, swap, cross-exchange)
+- Objective function scoring with configurable weights
+- Constraint validation (capacity, time windows, breaks, shifts)
+- Multi-depot assignment logic
 
-### Layer 3: Dashboard Integration (dashboard/)
+### Layer 3: Services (services/)
 
-- Imports `vrp_core` module directly
-- Converts CSV data to Customer objects
-- Calls solver and visualizes results
-- Generates reports and metrics
+Business logic orchestration:
+- Planning service: optimization workflow
+- Ingestion service: manifest parsing and validation
+- Operations service: route execution and tracking
+- Manifests service: load sheet and route document generation
+- Auth service: user and role management
+- Events service: audit logging
+
+### Layer 4: Repositories (repos/)
+
+Data access and persistence:
+- SQLAlchemy models and queries
+- Transaction management
+- Read models for UI queries
+- Event store for audit trail
+
+### Layer 5: Integrations (integrations/)
+
+External system interfaces:
+- Travel matrix providers (Euclidean, road network)
+- Traffic incident feeds
+- Telematics APIs (future)
+
+### Layer 6: UI (ui/)
+
+Web application interface:
+- NiceGUI reactive components
+- Multi-workspace routing
+- Map visualizations with route geometry
+- Real-time status updates
+
+### Layer 7: Workers (workers/)
+
+Background job processing:
+- Queue management with Redis/RQ
+- Long-running optimization tasks
+- Scheduled jobs (future)
 
 ## Code Organization Principles
 
 1. **Pure Python**: No compilation required, works on any platform
-2. **Separation of Concerns**: Data structures separate from algorithms
-3. **Single Module**: Core solver in one file for simplicity
-4. **Standard Library**: Minimal external dependencies
-5. **Test Isolation**: Comprehensive test coverage with pytest
+2. **Domain-Driven Design**: Clear separation of concerns
+3. **Dependency Inversion**: Domain layer has no infrastructure dependencies
+4. **Event Sourcing**: Audit trail through event logging
+5. **Modular Architecture**: Pluggable components (travel providers, objectives)
+6. **Type Safety**: Comprehensive type hints with pydantic validation
 
 ## Module Import Structure
 
 ```python
-# From dashboard or tests
-import vrp_core
+# Domain entities
+from vrp_platform.domain.entities import Order, Vehicle, Depot, SolveRequest
+from vrp_platform.domain.enums import OrderStatus, VehicleType
 
-# Create objects
-location = vrp_core.Location(lat, lon)
-customer = vrp_core.Customer(id, location, demand, start, end, service)
-solver = vrp_core.VRPSolver()
+# Optimizer
+from vrp_platform.optimizer.engine import RouteOptimizer
+from vrp_platform.integrations.travel import EuclideanTravelProvider
 
-# Solve problem
-routes = solver.solve(customers, capacities)
+# Services
+from vrp_platform.services.planning import PlanningService
+from vrp_platform.services.ingestion import IngestionService
 
-# Calculate distances
-dist = vrp_core.haversine_distance(lat1, lon1, lat2, lon2)
+# Bootstrap
+from vrp_platform.bootstrap import bootstrap_platform
+
+# Create and run
+app = bootstrap_platform()
+response = app.solve_plan(request)
 ```
+
+## Data Flow
+
+1. **Manifest Intake**: CSV → IngestionService → Orders in DB
+2. **Planning**: Orders → PlanningService → RouteOptimizer → Routes
+3. **Assignment**: Routes → Warehouse → Load Sheets
+4. **Execution**: Routes → Driver App → Status Updates
+5. **Tracking**: Status → Events → Customer Portal
+6. **Audit**: All actions → Event Store → Admin Dashboard
 

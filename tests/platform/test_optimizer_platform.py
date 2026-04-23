@@ -30,6 +30,36 @@ class StubTravelProvider:
         )
 
 
+class CoordinateTravelProvider:
+    def build(
+        self,
+        depot,
+        orders,
+        vehicles,
+        departure_minute,
+        traffic_incidents=None,
+        consider_traffic=True,
+        avoid_incidents=True,
+    ):
+        points = [(depot.latitude, depot.longitude)] + [(order.latitude, order.longitude) for order in orders]
+        matrix = []
+        distance = []
+        for left_lat, left_lon in points:
+            matrix_row = []
+            distance_row = []
+            for right_lat, right_lon in points:
+                dist = (((left_lat - right_lat) ** 2 + (left_lon - right_lon) ** 2) ** 0.5) * 111.0
+                distance_row.append(dist)
+                matrix_row.append(dist * 2.0)
+            matrix.append(matrix_row)
+            distance.append(distance_row)
+        return TravelMatrixResult(
+            matrix_minutes=matrix,
+            distance_km=distance,
+            metadata={"provider": "coordinate_stub", "fallback_used": False},
+        )
+
+
 def _request() -> SolveRequest:
     depot = Depot(id="depot", name="Depot", latitude=0.0, longitude=0.0)
     vehicle = Vehicle(
@@ -104,3 +134,69 @@ def test_optimizer_reports_dimension_mismatch():
     response = RouteOptimizer(StubTravelProvider()).solve(request)
 
     assert any(issue.code == "DIMENSION_EXCEEDED" for issue in response.unassigned_orders)
+
+
+def test_optimizer_supports_multi_depot_assignment():
+    depots = [
+        Depot(id="west", name="West Hub", latitude=19.0000, longitude=72.8000),
+        Depot(id="east", name="East Hub", latitude=19.2200, longitude=72.9800),
+    ]
+    vehicles = [
+        Vehicle(
+            id="veh-west",
+            name="West Van",
+            capacity_kg=500.0,
+            capacity_volume_m3=10.0,
+            depot_id="west",
+            average_speed_kmh=35.0,
+        ),
+        Vehicle(
+            id="veh-east",
+            name="East Van",
+            capacity_kg=500.0,
+            capacity_volume_m3=10.0,
+            depot_id="east",
+            average_speed_kmh=35.0,
+        ),
+    ]
+    orders = [
+        Order(
+            id="ord-west",
+            external_ref="ORD-WEST",
+            customer_name="West Customer",
+            latitude=19.0150,
+            longitude=72.8100,
+            demand_kg=40.0,
+            volume_m3=1.0,
+            service_time_min=10.0,
+            time_window_start_min=0.0,
+            time_window_end_min=400.0,
+        ),
+        Order(
+            id="ord-east",
+            external_ref="ORD-EAST",
+            customer_name="East Customer",
+            latitude=19.2250,
+            longitude=72.9750,
+            demand_kg=45.0,
+            volume_m3=1.2,
+            service_time_min=10.0,
+            time_window_start_min=0.0,
+            time_window_end_min=400.0,
+        ),
+    ]
+    request = SolveRequest(
+        depots=depots,
+        vehicles=vehicles,
+        orders=orders,
+        constraints=ConstraintSet(departure_minute=0.0),
+        objective=ObjectiveMode.COST,
+    )
+
+    response = RouteOptimizer(CoordinateTravelProvider()).solve(request)
+
+    assert len(response.routes) == 2
+    assert {route.depot_id for route in response.routes} == {"west", "east"}
+    assert response.metadata["depot_count"] == 2
+    assert response.metadata["depot_assignments"] == {"ord-west": "west", "ord-east": "east"}
+    assert response.metadata["travel_provider"]["provider"] == "multi_depot"

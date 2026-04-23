@@ -25,6 +25,7 @@ def _settings(tmp_path: Path) -> PlatformSettings:
     return PlatformSettings(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'platform.db'}",
         seed_demo_data=True,
+        use_road_geometry=False,
     )
 
 

@@ -1,42 +1,57 @@
 # Product Overview
 
-This is a professional-grade Vehicle Routing Problem (VRP) solver implemented in pure Python. The solver addresses Capacitated VRP (CVRP) and VRP with Time Windows (VRPTW) using a Nearest Neighbor heuristic.
+This is a professional-grade Vehicle Routing Platform built with pure Python. The platform provides a complete operational control tower for logistics operations, featuring multi-workspace interfaces for dispatchers, warehouse staff, drivers, customers, and administrators.
 
 ## Core Capabilities
 
-- Solve vehicle routing problems with capacity constraints
-- Support time window constraints for customer visits
-- Calculate geographic distances using Haversine formula
-- Generate feasible delivery routes for heterogeneous fleets (different vehicle capacities)
-- Python-native implementation for easy integration and deployment
+### Routing Engine
+- Multi-depot vehicle routing with capacity and time window constraints
+- Heterogeneous fleet support (different vehicle types and capacities)
+- Break scheduling and shift time enforcement
+- Traffic incident awareness with dynamic route penalties
+- Regret insertion heuristic with local search optimization (2-opt, relocate, swap, cross-exchange)
+- Configurable objective functions (distance, time, cost, emissions, load balance)
+
+### Platform Features
+- **Dispatcher Control Tower**: Manifest intake, filtered planning, scenario preview, route board
+- **Warehouse Operations**: Load sheets, dock assignments, shipment tracking
+- **Driver Workflow**: Route execution, turn-by-turn navigation, incident reporting
+- **Customer Portal**: Shipment lookup and tracking
+- **Admin Dashboard**: Audit logs, system monitoring, configuration management
+
+### Data Persistence
+- SQLAlchemy-based persistence layer
+- SQLite for local development
+- PostgreSQL-ready for production
+- Event sourcing for audit trails
 
 ## Design Philosophy
 
-The system is designed for ease of use, maintainability, and cross-platform compatibility. The pure Python implementation prioritizes:
+The platform is designed for operational excellence, maintainability, and scalability:
 
-- **Simplicity**: No compilation, no build tools, just Python
-- **Portability**: Works on any platform with Python 3.8+
-- **Maintainability**: Clear, readable code that's easy to modify
-- **Extensibility**: Architecture supports future enhancements
-
-Future enhancements may include:
-- Advanced metaheuristics (genetic algorithms, simulated annealing)
-- Performance optimization with NumPy/Numba
-- Additional constraint types
-- Multi-depot routing
+- **Pure Python**: No compilation, no build tools, works everywhere
+- **Domain-Driven Design**: Clear separation between domain entities, services, and infrastructure
+- **Event-Driven**: Audit trail and operational visibility through event logging
+- **Modular Architecture**: Pluggable travel providers, objective functions, and constraints
+- **Production-Ready**: Queue-backed workers, Redis integration, comprehensive error handling
 
 ## Key Constraints
 
-- **Vehicle capacity**: Routes cannot exceed specified capacity
-- **Time windows**: Customers must be visited within their service windows
-- **Depot-based**: All routes start and end at depot (customer 0)
-- **Heterogeneous fleet**: Different vehicles can have different capacities
+The optimizer handles:
+- **Vehicle capacity**: Weight (kg) and volume (m³) constraints
+- **Time windows**: Customer service windows and vehicle shift times
+- **Break requirements**: Mandatory breaks after continuous driving
+- **Depot assignments**: Multi-depot routing with depot-specific fleets
+- **Vehicle restrictions**: Dimension limits, fuel type, special equipment requirements
+- **Traffic incidents**: Dynamic penalties for affected road segments
 
 ## Use Cases
 
-- Last-mile delivery optimization
-- Field service routing
-- Logistics planning
-- Supply chain optimization
-- Fleet management
+- Last-mile delivery operations
+- Field service dispatch
+- Multi-depot logistics coordination
+- Warehouse load planning
+- Real-time route monitoring and adjustment
+- Customer shipment tracking
+- Operational audit and compliance
 

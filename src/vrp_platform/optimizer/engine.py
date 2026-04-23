@@ -57,6 +57,115 @@ class RouteOptimizer:
             raise ValueError("At least one depot is required")
         self._validate_request(request)
         run_id = f"run-{uuid.uuid4().hex[:10]}"
+        depots_by_id = {depot.id: depot for depot in request.depots}
+        vehicles_by_depot: dict[str, list[Vehicle]] = {}
+        for vehicle in request.vehicles:
+            vehicles_by_depot.setdefault(vehicle.depot_id, []).append(vehicle)
+
+        assigned_orders, precheck_violations, depot_assignments = self._assign_orders_to_depots(
+            request,
+            depots_by_id,
+            vehicles_by_depot,
+        )
+        route_plans: list[RoutePlan] = []
+        unassigned = precheck_violations[:]
+        travel_clusters: list[dict[str, object]] = []
+        route_number_start = 1
+
+        for depot_id, order_indexes in assigned_orders.items():
+            if not order_indexes:
+                continue
+            depot = depots_by_id[depot_id]
+            depot_vehicles = vehicles_by_depot.get(depot_id, [])
+            shift_lookup = {shift.vehicle_id: shift for shift in request.shifts if shift.vehicle_id in {v.id for v in depot_vehicles}}
+            depot_request = SolveRequest(
+                depots=[depot],
+                vehicles=depot_vehicles,
+                orders=[request.orders[index] for index in order_indexes],
+                shifts=[shift for shift in request.shifts if shift.vehicle_id in shift_lookup],
+                constraints=request.constraints,
+                objective=request.objective,
+                travel_provider=request.travel_provider,
+                traffic_incidents=request.traffic_incidents,
+            )
+            depot_routes, depot_unassigned, travel_metadata = self._solve_single_depot(
+                run_id=run_id,
+                request=depot_request,
+                route_number_start=route_number_start,
+            )
+            route_number_start += len(depot_routes)
+            route_plans.extend(depot_routes)
+            unassigned.extend(depot_unassigned)
+            travel_clusters.append(
+                {
+                    "depot_id": depot_id,
+                    "order_count": len(order_indexes),
+                    **travel_metadata,
+                }
+            )
+
+        objective_breakdown = self._objective_breakdown(route_plans)
+        packing_status = self._packing_status(route_plans, request)
+        travel_metadata = self._combine_travel_metadata(travel_clusters)
+        metadata = {
+            "travel_provider": travel_metadata,
+            "orders_considered": len(request.orders),
+            "orders_planned": sum(len(route.stops) for route in route_plans),
+            "unassigned_count": len(unassigned),
+            "depot_assignments": depot_assignments,
+            "depot_count": len([depot_id for depot_id, order_ids in assigned_orders.items() if order_ids]),
+        }
+        warnings = []
+        if travel_metadata.get("fallback_used"):
+            warnings.append("Fallback travel-time model used; ETA confidence is reduced.")
+        return SolveResponse(
+            run_id=run_id,
+            routes=route_plans,
+            unassigned_orders=unassigned,
+            objective_breakdown=objective_breakdown,
+            validation_warnings=warnings,
+            packing_status=packing_status,
+            metadata=metadata,
+        )
+
+    def _validate_request(self, request: SolveRequest) -> None:
+        if not request.vehicles:
+            raise ValueError("At least one vehicle is required")
+        if not request.orders:
+            raise ValueError("At least one order is required")
+        depot_ids = {depot.id for depot in request.depots}
+        for depot in request.depots:
+            if not -90.0 <= depot.latitude <= 90.0:
+                raise ValueError(f"Invalid depot latitude: {depot.latitude}")
+            if not -180.0 <= depot.longitude <= 180.0:
+                raise ValueError(f"Invalid depot longitude: {depot.longitude}")
+        for vehicle in request.vehicles:
+            if vehicle.capacity_kg <= 0 or vehicle.capacity_volume_m3 <= 0:
+                raise ValueError(f"Vehicle {vehicle.id} has non-positive capacity")
+            if vehicle.average_speed_kmh <= 0:
+                raise ValueError(f"Vehicle {vehicle.id} has invalid average speed")
+            if vehicle.max_continuous_drive_min < 0 or vehicle.required_break_min < 0:
+                raise ValueError(f"Vehicle {vehicle.id} has invalid break configuration")
+            if vehicle.depot_id not in depot_ids:
+                raise ValueError(f"Vehicle {vehicle.id} references unknown depot {vehicle.depot_id}")
+        for order in request.orders:
+            if not -90.0 <= order.latitude <= 90.0:
+                raise ValueError(f"Invalid order latitude: {order.latitude}")
+            if not -180.0 <= order.longitude <= 180.0:
+                raise ValueError(f"Invalid order longitude: {order.longitude}")
+            if order.demand_kg < 0 or order.volume_m3 < 0:
+                raise ValueError(f"Order {order.external_ref} has negative demand or volume")
+            if order.service_time_min < 0:
+                raise ValueError(f"Order {order.external_ref} has negative service time")
+            if order.time_window_start_min > order.time_window_end_min:
+                raise ValueError(f"Order {order.external_ref} has invalid time window")
+
+    def _solve_single_depot(
+        self,
+        run_id: str,
+        request: SolveRequest,
+        route_number_start: int,
+    ) -> tuple[list[RoutePlan], list[Violation], dict[str, object]]:
         depot = request.depots[0]
         travel = self.travel_provider.build(
             depot=depot,
@@ -70,7 +179,7 @@ class RouteOptimizer:
         scorer = ObjectiveScorer(request.objective)
         shifts = {shift.vehicle_id: shift for shift in request.shifts}
         feasible, blocked = self._feasibility_precheck(request, travel.distance_km)
-        route_states = [_RouteState(vehicle=v, depot=depot, order_indexes=[]) for v in request.vehicles]
+        route_states = [_RouteState(vehicle=vehicle, depot=depot, order_indexes=[]) for vehicle in request.vehicles]
         unassigned = blocked[:]
         repair_candidates: list[int] = []
 
@@ -133,61 +242,102 @@ class RouteOptimizer:
         route_plans = self._build_route_plans(
             run_id=run_id,
             request=request,
-            depot=depot,
             route_states=route_states,
             travel_minutes=travel.matrix_minutes,
             distance_km=travel.distance_km,
             shifts=shifts,
+            route_number_start=route_number_start,
         )
-        objective_breakdown = self._objective_breakdown(route_plans)
-        packing_status = self._packing_status(route_plans, request)
-        metadata = {
-            "travel_provider": travel.metadata,
-            "orders_considered": len(request.orders),
-            "orders_planned": sum(len(route.stops) for route in route_plans),
-            "unassigned_count": len(unassigned),
-        }
-        warnings = []
-        if travel.metadata.get("fallback_used"):
-            warnings.append("Fallback travel-time model used; ETA confidence is reduced.")
-        return SolveResponse(
-            run_id=run_id,
-            routes=route_plans,
-            unassigned_orders=unassigned,
-            objective_breakdown=objective_breakdown,
-            validation_warnings=warnings,
-            packing_status=packing_status,
-            metadata=metadata,
-        )
+        return route_plans, unassigned, travel.metadata
 
-    def _validate_request(self, request: SolveRequest) -> None:
-        if not request.vehicles:
-            raise ValueError("At least one vehicle is required")
-        if not request.orders:
-            raise ValueError("At least one order is required")
-        for depot in request.depots:
-            if not -90.0 <= depot.latitude <= 90.0:
-                raise ValueError(f"Invalid depot latitude: {depot.latitude}")
-            if not -180.0 <= depot.longitude <= 180.0:
-                raise ValueError(f"Invalid depot longitude: {depot.longitude}")
-        for vehicle in request.vehicles:
-            if vehicle.capacity_kg <= 0 or vehicle.capacity_volume_m3 <= 0:
-                raise ValueError(f"Vehicle {vehicle.id} has non-positive capacity")
-            if vehicle.average_speed_kmh <= 0:
-                raise ValueError(f"Vehicle {vehicle.id} has invalid average speed")
-            if vehicle.max_continuous_drive_min < 0 or vehicle.required_break_min < 0:
-                raise ValueError(f"Vehicle {vehicle.id} has invalid break configuration")
-        for order in request.orders:
-            if not -90.0 <= order.latitude <= 90.0:
-                raise ValueError(f"Invalid order latitude: {order.latitude}")
-            if not -180.0 <= order.longitude <= 180.0:
-                raise ValueError(f"Invalid order longitude: {order.longitude}")
-            if order.demand_kg < 0 or order.volume_m3 < 0:
-                raise ValueError(f"Order {order.external_ref} has negative demand or volume")
-            if order.service_time_min < 0:
-                raise ValueError(f"Order {order.external_ref} has negative service time")
-            if order.time_window_start_min > order.time_window_end_min:
-                raise ValueError(f"Order {order.external_ref} has invalid time window")
+    def _assign_orders_to_depots(
+        self,
+        request: SolveRequest,
+        depots_by_id: dict[str, Depot],
+        vehicles_by_depot: dict[str, list[Vehicle]],
+    ) -> tuple[dict[str, list[int]], list[Violation], dict[str, str]]:
+        assignments = {depot_id: [] for depot_id, vehicles in vehicles_by_depot.items() if vehicles}
+        blocked: list[Violation] = []
+        depot_lookup: dict[str, str] = {}
+
+        for order_idx, order in enumerate(request.orders):
+            capable_depots: list[tuple[float, str]] = []
+            dimension_capable = False
+            weight_capable = False
+            volume_capable = False
+            for depot_id, vehicles in vehicles_by_depot.items():
+                capable_vehicles = [vehicle for vehicle in vehicles if self._vehicle_can_serve_order(vehicle, order)]
+                if capable_vehicles:
+                    dimension_capable = True
+                if any(vehicle.capacity_kg >= order.demand_kg for vehicle in capable_vehicles):
+                    weight_capable = True
+                if any(vehicle.capacity_volume_m3 >= order.volume_m3 for vehicle in capable_vehicles):
+                    volume_capable = True
+                feasible_vehicles = [
+                    vehicle
+                    for vehicle in capable_vehicles
+                    if vehicle.capacity_kg >= order.demand_kg and vehicle.capacity_volume_m3 >= order.volume_m3
+                ]
+                if not feasible_vehicles:
+                    continue
+                depot = depots_by_id[depot_id]
+                capable_depots.append((self._haversine_km(depot.latitude, depot.longitude, order.latitude, order.longitude), depot_id))
+
+            if not dimension_capable:
+                blocked.append(
+                    Violation(
+                        code="DIMENSION_EXCEEDED",
+                        order_id=order.id,
+                        message="Order dimensions do not fit any active vehicle type.",
+                    )
+                )
+                continue
+            if not weight_capable:
+                blocked.append(
+                    Violation(
+                        code="CAPACITY_EXCEEDED",
+                        order_id=order.id,
+                        message="Order demand exceeds every vehicle capacity.",
+                    )
+                )
+                continue
+            if not volume_capable:
+                blocked.append(
+                    Violation(
+                        code="VOLUME_EXCEEDED",
+                        order_id=order.id,
+                        message="Order volume exceeds every vehicle cargo volume.",
+                    )
+                )
+                continue
+            if not capable_depots:
+                blocked.append(
+                    Violation(
+                        code="NO_ELIGIBLE_DEPOT",
+                        order_id=order.id,
+                        message="No depot has a vehicle class that can legally or physically serve this order.",
+                    )
+                )
+                continue
+
+            _, assigned_depot_id = min(capable_depots, key=lambda item: item[0])
+            assignments[assigned_depot_id].append(order_idx)
+            depot_lookup[order.id] = assigned_depot_id
+
+        return assignments, blocked, depot_lookup
+
+    def _combine_travel_metadata(self, clusters: list[dict[str, object]]) -> dict[str, object]:
+        if not clusters:
+            return {"provider": "none", "fallback_used": False, "active_incident_count": 0}
+        if len(clusters) == 1:
+            return clusters[0]
+        return {
+            "provider": "multi_depot",
+            "fallback_used": any(bool(cluster.get("fallback_used")) for cluster in clusters),
+            "active_incident_count": sum(int(cluster.get("active_incident_count", 0)) for cluster in clusters),
+            "affected_pairs": sum(int(cluster.get("affected_pairs", 0)) for cluster in clusters),
+            "clusters": clusters,
+        }
 
     def _feasibility_precheck(
         self,
@@ -323,10 +473,11 @@ class RouteOptimizer:
         shifts: dict[str, Shift],
         scorer: ObjectiveScorer,
     ) -> None:
-        for state in routes:
-            improved = True
-            while improved:
-                improved = self._two_opt(
+        improved = True
+        while improved:
+            improved = False
+            for state in routes:
+                while self._two_opt(
                     state,
                     request.orders,
                     travel_minutes,
@@ -334,34 +485,38 @@ class RouteOptimizer:
                     shifts.get(state.vehicle.id),
                     request.constraints,
                     scorer,
-                )
-        self._relocate(
-            routes,
-            request.orders,
-            travel_minutes,
-            distance_km,
-            shifts,
-            request.constraints,
-            scorer,
-        )
-        self._swap(
-            routes,
-            request.orders,
-            travel_minutes,
-            distance_km,
-            shifts,
-            request.constraints,
-            scorer,
-        )
-        self._cross_exchange(
-            routes,
-            request.orders,
-            travel_minutes,
-            distance_km,
-            shifts,
-            request.constraints,
-            scorer,
-        )
+                ):
+                    improved = True
+            if self._relocate(
+                routes,
+                request.orders,
+                travel_minutes,
+                distance_km,
+                shifts,
+                request.constraints,
+                scorer,
+            ):
+                improved = True
+            if self._swap(
+                routes,
+                request.orders,
+                travel_minutes,
+                distance_km,
+                shifts,
+                request.constraints,
+                scorer,
+            ):
+                improved = True
+            if self._cross_exchange(
+                routes,
+                request.orders,
+                travel_minutes,
+                distance_km,
+                shifts,
+                request.constraints,
+                scorer,
+            ):
+                improved = True
 
     def _two_opt(
         self,
@@ -401,7 +556,7 @@ class RouteOptimizer:
         shifts: dict[str, Shift],
         constraints: ConstraintSet,
         scorer: ObjectiveScorer,
-    ) -> None:
+    ) -> bool:
         for left in routes:
             for right in routes:
                 if left is right or not left.order_indexes:
@@ -472,7 +627,8 @@ class RouteOptimizer:
                         if new_total + 1e-6 < baseline:
                             left.order_indexes = reduced
                             right.order_indexes = expanded
-                            return
+                            return True
+        return False
 
     def _swap(
         self,
@@ -483,7 +639,7 @@ class RouteOptimizer:
         shifts: dict[str, Shift],
         constraints: ConstraintSet,
         scorer: ObjectiveScorer,
-    ) -> None:
+    ) -> bool:
         for first_index, first in enumerate(routes):
             for second in routes[first_index + 1 :]:
                 baseline = self._route_penalty(
@@ -552,7 +708,8 @@ class RouteOptimizer:
                         if new_total + 1e-6 < baseline:
                             first.order_indexes = left_candidate
                             second.order_indexes = right_candidate
-                            return
+                            return True
+        return False
 
     def _cross_exchange(
         self,
@@ -563,7 +720,7 @@ class RouteOptimizer:
         shifts: dict[str, Shift],
         constraints: ConstraintSet,
         scorer: ObjectiveScorer,
-    ) -> None:
+    ) -> bool:
         for first_index, first in enumerate(routes):
             for second in routes[first_index + 1 :]:
                 if not first.order_indexes or not second.order_indexes:
@@ -633,7 +790,8 @@ class RouteOptimizer:
                 if after + 1e-6 < before:
                     first.order_indexes = left_candidate
                     second.order_indexes = right_candidate
-                    return
+                    return True
+        return False
 
     def _repair_unassigned(
         self,
@@ -674,16 +832,17 @@ class RouteOptimizer:
         self,
         run_id: str,
         request: SolveRequest,
-        depot: Depot,
         route_states: list[_RouteState],
         travel_minutes: list[list[float]],
         distance_km: list[list[float]],
         shifts: dict[str, Shift],
+        route_number_start: int = 1,
     ) -> list[RoutePlan]:
         plans: list[RoutePlan] = []
-        for route_index, state in enumerate(route_states):
+        for state in route_states:
             if not state.order_indexes:
                 continue
+            route_number = route_number_start + len(plans)
             current_time = (
                 shifts.get(state.vehicle.id).start_minute
                 if state.vehicle.id in shifts
@@ -709,7 +868,7 @@ class RouteOptimizer:
                 arrival = current_time + travel_time
                 service_start = max(arrival, order.time_window_start_min)
                 departure = service_start + order.service_time_min
-                stop_id = f"{run_id}-stop-{route_index + 1}-{sequence}"
+                stop_id = f"{run_id}-stop-{route_number}-{sequence}"
                 stops.append(
                     Stop(
                         stop_id=stop_id,
@@ -724,7 +883,7 @@ class RouteOptimizer:
                 )
                 legs.append(
                     RouteLeg(
-                        from_stop_id=stops[-2].stop_id if len(stops) > 1 else depot.id,
+                        from_stop_id=stops[-2].stop_id if len(stops) > 1 else state.depot.id,
                         to_stop_id=stop_id,
                         distance_km=travel_distance,
                         travel_time_min=travel_time,
@@ -748,15 +907,15 @@ class RouteOptimizer:
             )
             plans.append(
                 RoutePlan(
-                    route_id=f"{run_id}-route-{route_index + 1}",
+                    route_id=f"{run_id}-route-{route_number}",
                     vehicle_id=state.vehicle.id,
-                    depot_id=depot.id,
+                    depot_id=state.depot.id,
                     stops=stops,
                     legs=legs
                     + [
                         RouteLeg(
                             from_stop_id=stops[-1].stop_id,
-                            to_stop_id=depot.id,
+                            to_stop_id=state.depot.id,
                             distance_km=return_distance,
                             travel_time_min=return_travel,
                             eta_minute=current_time + return_travel,
@@ -842,6 +1001,18 @@ class RouteOptimizer:
             total += travel_minutes[left + 1][right + 1]
         total += travel_minutes[order_indexes[-1] + 1][0]
         return total
+
+    def _haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        earth_radius_km = 6371.0
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = (
+            math.sin(dlat / 2) ** 2
+            + math.cos(math.radians(lat1))
+            * math.cos(math.radians(lat2))
+            * math.sin(dlon / 2) ** 2
+        )
+        return earth_radius_km * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
 
     def _route_lateness(
         self,

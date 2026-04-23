@@ -1,7 +1,7 @@
 from vrp_platform.config import PlatformSettings
 from vrp_platform.domain.entities import Depot, Order, RoutePlan, Stop, TrafficIncident, Vehicle
 from vrp_platform.domain.enums import VehicleCategory
-from vrp_platform.integrations.travel import HaversineTravelMatrixProvider
+from vrp_platform.integrations.travel import HaversineTravelMatrixProvider, HybridRouteGeometryProvider
 from vrp_platform.services.manifests import ManifestService
 
 
@@ -104,3 +104,38 @@ def test_manifest_service_generates_reverse_load_sequence():
     assert len(plans) == 1
     assert [item.external_ref for item in plans[0].instructions] == ["SO-2", "SO-1"]
     assert plans[0].utilization_pct > 0
+
+
+def test_hybrid_route_geometry_provider_returns_road_points(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "routes": [
+                    {
+                        "geometry": {
+                            "coordinates": [
+                                [72.8777, 19.0760],
+                                [72.8800, 19.0780],
+                                [72.8900, 19.0900],
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    def fake_get(url, params=None, timeout=None):
+        assert "/route/v1/driving/" in url
+        return FakeResponse()
+
+    monkeypatch.setattr("vrp_platform.integrations.travel.requests.get", fake_get)
+
+    provider = HybridRouteGeometryProvider(PlatformSettings(use_road_geometry=True))
+    result = provider.build([(19.0760, 72.8777), (19.0900, 72.8900)])
+
+    assert result.metadata["provider"] == "osrm_route"
+    assert result.metadata["fallback_used"] is False
+    assert len(result.points) == 3
+    assert result.points[1] == (19.0780, 72.8800)

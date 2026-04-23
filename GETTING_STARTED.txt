@@ -2,14 +2,18 @@
                         VRP PLATFORM - GETTING STARTED
 ================================================================================
 
-This repository now contains the platform implementation only.
+Welcome to the VRP Platform - a professional-grade vehicle routing system
+with a complete operational control tower for logistics operations.
 
 What you get:
-  - Dispatcher control tower
-  - Customer shipment lookup
-  - Driver route workflow
-  - Warehouse load-sheet generation
-  - Pure-Python routing engine and persistence layer
+  - Multi-workspace NiceGUI application (dispatcher, warehouse, driver, customer, admin)
+  - Pure-Python routing engine with multi-depot support
+  - SQLAlchemy persistence (SQLite for dev, PostgreSQL-ready for prod)
+  - Traffic incident awareness and dynamic route penalties
+  - Warehouse load sheets and shipment tracking
+  - Driver route execution with turn-by-turn navigation
+  - Customer shipment lookup portal
+  - Admin audit logs and system monitoring
 
 ================================================================================
                                 QUICK SETUP
@@ -24,6 +28,10 @@ What you get:
 
 3. Run
    python -m vrp_platform.ui.app
+   
+   Or use quick launcher:
+   Windows: run_dashboard.bat
+   Linux/macOS: ./run_dashboard.sh
 
 4. Open
    http://localhost:8080
@@ -32,27 +40,61 @@ What you get:
                               PROJECT STRUCTURE
 ================================================================================
 
-  src/vrp_platform/     Platform code
-  tests/platform/       Focused platform checks
-  sample_manifest.csv   Example intake file
-  setup.bat / setup.sh  Local setup scripts
-  run_dashboard.*       Platform launcher scripts
+  src/vrp_platform/
+    domain/           Domain entities and enums
+    optimizer/        Route construction and local search
+    repos/            SQLAlchemy models and data access
+    services/         Business logic (planning, ingestion, operations)
+    integrations/     Travel matrix providers
+    ui/               NiceGUI web application
+    workers/          Background job queue (Redis/RQ)
+    
+  tests/platform/     Integration tests with hypothesis
+  
+  var/                Runtime data (SQLite database)
+  
+  setup.bat/sh        Platform setup scripts
+  run_dashboard.*     Quick launcher scripts
+  sample_manifest.csv Example intake file
 
 ================================================================================
                               IMPORTANT SETTINGS
 ================================================================================
 
-  VRP_DATABASE_URL   Database connection string
-  VRP_REDIS_URL      Queue backend target
-  VRP_TIMEZONE       Operational timezone
+  VRP_DATABASE_URL        Database connection string
+                          Default: sqlite:///var/vrp_platform.db
+                          
+  VRP_REDIS_URL           Queue backend for async jobs
+                          Default: redis://localhost:6379/0
+                          
+  VRP_TIMEZONE            Operational timezone
+                          Default: UTC
+                          
+  VRP_USE_ROAD_GEOMETRY   Enable road-shaped route polylines
+                          Default: false
 
 ================================================================================
                                NEXT STEPS
 ================================================================================
 
-  1. Ingest a manifest from the dispatcher page
+  1. Upload a manifest CSV from the dispatcher page
   2. Run a filtered or selected-order optimization
-  3. Review warehouse load sheets and route board
-  4. Assign the demo driver to inspect the driver workflow
+  3. Review the route board and warehouse load sheets
+  4. Assign routes to drivers and inspect the driver workflow
+  5. Use the customer portal to track shipments
+  6. Check admin dashboard for audit logs
+
+================================================================================
+                              RUNNING TESTS
+================================================================================
+
+  Run all platform tests:
+    python -m pytest tests/platform -v
+    
+  Run with quiet output:
+    python -m pytest tests/platform -q
+    
+  Run property-based tests with more iterations:
+    python -m pytest tests/platform -v --hypothesis-profile=thorough
 
 ================================================================================

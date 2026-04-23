@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from vrp_platform.domain.entities import DeliveryEvent, TimelineEvent
+from vrp_platform.domain.entities import AuditView, DeliveryEvent, TimelineEvent
 from vrp_platform.repos.models import AuditLogRecord, CustomerEventRecord, DeliveryEventRecord
 
 
@@ -92,3 +92,25 @@ class EventRepository:
             )
             for row in rows
         ]
+
+    def list_audit_logs(self, limit: int = 30) -> list[AuditView]:
+        stmt = select(AuditLogRecord).order_by(AuditLogRecord.created_at.desc()).limit(limit)
+        rows = self.session.scalars(stmt).all()
+        return [
+            AuditView(
+                event_id=row.id,
+                actor=row.actor,
+                action=row.action,
+                entity_type=row.entity_type,
+                entity_id=row.entity_id,
+                occurred_at=row.created_at,
+                payload=row.payload or {},
+            )
+            for row in rows
+        ]
+
+    def count_audit_logs(self, action: str | None = None) -> int:
+        stmt = select(func.count(AuditLogRecord.id))
+        if action is not None:
+            stmt = stmt.where(AuditLogRecord.action == action)
+        return int(self.session.scalar(stmt) or 0)
