@@ -1,6 +1,12 @@
 from unittest import TestCase
 
-from main import next_order_id
+try:
+    from ..main import next_order_id
+except ImportError:  # pragma: no cover - direct discovery from repo root or parent
+    try:
+        from VRP.main import next_order_id
+    except ImportError:
+        from main import next_order_id
 
 
 class MainTests(TestCase):

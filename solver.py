@@ -5,7 +5,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from models import GeoPoint, Node, RouteOutline, RouteSummary, SolveResult, SolveStep
+try:  # Support package and script-local imports.
+    from .models import GeoPoint, Node, RouteOutline, RouteSummary, SolveResult, SolveStep
+except ImportError:  # pragma: no cover - script entrypoint path
+    from models import GeoPoint, Node, RouteOutline, RouteSummary, SolveResult, SolveStep
 
 ROUTE_COLORS = [
     "#ff6b00",

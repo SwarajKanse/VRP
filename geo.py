@@ -9,9 +9,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from models import GeoPoint, Node
+try:  # Support package and script-local imports.
+    from .models import GeoPoint, Node
+except ImportError:  # pragma: no cover - script entrypoint path
+    from models import GeoPoint, Node
 
-USER_AGENT = "mini-vrp-tkinter/1.0"
+USER_AGENT = "vrp-solver-stdlib/1.0"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org"
 OSRM_URL = "https://router.project-osrm.org"
 TILE_URL = "https://tile.openstreetmap.org"

@@ -1,2 +1,1 @@
-"""Mini Tkinter VRP solver application."""
-
+"""Stdlib Tkinter VRP solver package."""

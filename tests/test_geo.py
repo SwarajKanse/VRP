@@ -2,8 +2,16 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-from geo import RoadService
-from models import GeoPoint
+try:
+    from ..geo import RoadService
+    from ..models import GeoPoint
+except ImportError:  # pragma: no cover - direct discovery from repo root or parent
+    try:
+        from VRP.geo import RoadService
+        from VRP.models import GeoPoint
+    except ImportError:
+        from geo import RoadService
+        from models import GeoPoint
 
 
 class RoadServiceTests(TestCase):

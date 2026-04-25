@@ -1,2 +1,1 @@
-"""Stdlib unittest suite for the mini Tkinter VRP solver."""
-
+"""Stdlib unittest suite for the VRP solver."""

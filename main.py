@@ -8,10 +8,16 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
-from canvas_view import OPTIMAL_COLOR, RouteCanvas
-from geo import KNOWN_LOCATIONS, RoadService
-from models import AnimationRoute, GeoPoint, Node, SolveResult, SolveStep
-from solver import ExplainableVRPSolver
+try:  # Support both `python main.py` and `python -m VRP.main`.
+    from .canvas_view import OPTIMAL_COLOR, RouteCanvas
+    from .geo import KNOWN_LOCATIONS, RoadService
+    from .models import AnimationRoute, GeoPoint, Node, SolveResult, SolveStep
+    from .solver import ExplainableVRPSolver
+except ImportError:  # pragma: no cover - script entrypoint path
+    from canvas_view import OPTIMAL_COLOR, RouteCanvas
+    from geo import KNOWN_LOCATIONS, RoadService
+    from models import AnimationRoute, GeoPoint, Node, SolveResult, SolveStep
+    from solver import ExplainableVRPSolver
 
 ACCENT = "#c96a2d"
 INK = "#0f172a"

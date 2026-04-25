@@ -8,8 +8,12 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from geo import RoadService
-from models import AnimationRoute, GeoPoint, Node, RouteOutline, RouteSummary, SolveStep
+try:  # Support package and script-local imports.
+    from .geo import RoadService
+    from .models import AnimationRoute, GeoPoint, Node, RouteOutline, RouteSummary, SolveStep
+except ImportError:  # pragma: no cover - script entrypoint path
+    from geo import RoadService
+    from models import AnimationRoute, GeoPoint, Node, RouteOutline, RouteSummary, SolveStep
 
 DEFAULT_CENTER = GeoPoint(19.0760, 72.8777)
 MIN_ZOOM = 3

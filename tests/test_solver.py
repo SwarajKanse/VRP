@@ -1,7 +1,15 @@
 from unittest import TestCase
 
-from models import GeoPoint, Node
-from solver import ExplainableVRPSolver
+try:
+    from ..models import GeoPoint, Node
+    from ..solver import ExplainableVRPSolver
+except ImportError:  # pragma: no cover - direct discovery from repo root or parent
+    try:
+        from VRP.models import GeoPoint, Node
+        from VRP.solver import ExplainableVRPSolver
+    except ImportError:
+        from models import GeoPoint, Node
+        from solver import ExplainableVRPSolver
 
 
 class SolverTests(TestCase):
