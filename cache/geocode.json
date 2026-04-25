@@ -1,0 +1,77 @@
+{
+  "bandra": {
+    "label": "Bandra, Gurunanak Marg (Turner Road), Lal Mati (Lal Mitti), Khar, H/W Ward, Mumbai Zone 3, Mumbai, Mumbai Suburban District, Maharashtra, 400050, India",
+    "latitude": 19.0549792,
+    "longitude": 72.8402203
+  },
+  "bandra boutique": {
+    "label": "Bandra Boutique",
+    "latitude": 19.0596,
+    "longitude": 72.8295
+  },
+  "bandra boutique||mumbai|maharashtra|india": {
+    "label": "Bandra Boutique",
+    "latitude": 19.0596,
+    "longitude": 72.8295
+  },
+  "juinagar": {
+    "label": "Juinagar, Juinagar Station Road, Sanpada, Navi Mumbai, Thane Subdistrict, Thane, Maharashtra, 400706, India",
+    "latitude": 19.0559456,
+    "longitude": 73.0182495
+  },
+  "juinagar||mumbai|maharashtra|india": {
+    "label": "Juinagar, Juinagar Station Road, Sanpada, Navi Mumbai, Thane Subdistrict, Thane, Maharashtra, 400706, India",
+    "latitude": 19.0559456,
+    "longitude": 73.0182495
+  },
+  "mira bhayander||mumbai|mumbai suburban district|maharashtra|india": {
+    "label": "Mira-Bhayander, Thane Subdistrict, Thane, Maharashtra, India",
+    "latitude": 19.2970316,
+    "longitude": 72.858686
+  },
+  "mumbai hub": {
+    "label": "Mumbai Hub",
+    "latitude": 19.076,
+    "longitude": 72.8777
+  },
+  "mumbai hub||mumbai hub": {
+    "label": "Mumbai Hub",
+    "latitude": 19.076,
+    "longitude": 72.8777
+  },
+  "mumbai hub||mumbai|maharashtra|india": {
+    "label": "Mumbai Hub",
+    "latitude": 19.076,
+    "longitude": 72.8777
+  },
+  "panvel||mumbai|maharashtra|india": {
+    "label": "Panvel, Panvel Subdistrict, Raigad, Maharashtra, India",
+    "latitude": 18.9895249,
+    "longitude": 73.1221935
+  },
+  "thadomal shahani engineering college": {
+    "label": "Champ Tsec, Valtournenche, Valle d'Aosta / Vall\u00e9e d'Aoste, 11028, Italia",
+    "latitude": 45.8583024,
+    "longitude": 7.6553968
+  },
+  "thadomal shahani engineering college||mumbai|maharashtra|india": {
+    "label": "TSEC College, 37th Road, Linking Road Shopping area, Khar, Bandra West, Mumbai Zone 3, Mumbai, Mumbai Suburban District, Maharashtra, 400050, India",
+    "latitude": 19.063948,
+    "longitude": 72.8357925
+  },
+  "tsec, mumbai||g/s ward|mumbai city district|maharashtra|india": {
+    "label": "TSEC College, 37th Road, Linking Road Shopping area, Khar, Bandra West, Mumbai Zone 3, Mumbai, Mumbai Suburban District, Maharashtra, 400050, India",
+    "latitude": 19.063948,
+    "longitude": 72.8357925
+  },
+  "tsec, mumbai||mumbai|maharashtra|india": {
+    "label": "TSEC College, 37th Road, Linking Road Shopping area, Khar, Bandra West, Mumbai Zone 3, Mumbai, Mumbai Suburban District, Maharashtra, 400050, India",
+    "latitude": 19.063948,
+    "longitude": 72.8357925
+  },
+  "tsec, mumbai||mumbai|mumbai suburban district|maharashtra|india": {
+    "label": "TSEC College, 37th Road, Linking Road Shopping area, Khar, Bandra West, Mumbai Zone 3, Mumbai, Mumbai Suburban District, Maharashtra, 400050, India",
+    "latitude": 19.063948,
+    "longitude": 72.8357925
+  }
+}
