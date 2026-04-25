@@ -1,9 +1,0 @@
-Order ID,Source Name,Destination Name,Latitude,Longitude,Length (cm),Width (cm),Height (cm),Weight (kg),Fragile,This Side Up
-ORD001,Warehouse A,Customer 1,19.0760,72.8777,50,40,30,15.5,Yes,No
-ORD002,Warehouse A,Customer 1,19.0760,72.8777,30,30,30,8.2,No,Yes
-ORD003,Warehouse B,Customer 2,19.0896,72.8656,60,50,40,22.0,No,No
-ORD004,Warehouse A,Customer 3,19.0544,72.8320,45,35,25,12.5,Yes,Yes
-ORD005,Warehouse B,Customer 2,19.0896,72.8656,40,40,40,18.0,No,No
-ORD006,Depot,Customer 4,19.0650,72.8350,55,45,35,20.0,Yes,No
-ORD007,Warehouse A,Customer 5,19.0720,72.8450,35,30,25,10.0,No,Yes
-ORD008,Depot,Customer 3,19.0544,72.8320,50,50,50,25.0,No,No
