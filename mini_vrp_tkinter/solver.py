@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 
 from mini_vrp_tkinter.models import GeoPoint, Node, RouteOutline, RouteSummary, SolveResult, SolveStep
 
@@ -17,6 +18,7 @@ ROUTE_COLORS = [
 ]
 EPSILON = 1e-9
 EXACT_ORDER_LIMIT = 12
+ROUTE_EXACT_ORDER_LIMIT = 12
 
 
 @dataclass(slots=True)
@@ -71,71 +73,32 @@ class ExplainableVRPSolver:
 
     def solve(self) -> SolveResult:
         self.steps = []
-        baseline_routes = self._nearest_neighbor_baseline()
+        if not self.orders:
+            return SolveResult(
+                baseline_routes=[],
+                savings_routes=[],
+                final_routes=[],
+                steps=[],
+                baseline_distance_km=0.0,
+                savings_distance_km=0.0,
+                final_distance_km=0.0,
+                vehicle_count=self.vehicle_count,
+            )
+
+        used_vehicle_count, fleet_trials = self._select_vehicle_usage()
+        self._record_start_step(used_vehicle_count, fleet_trials)
+
+        baseline_routes = self._nearest_neighbor_baseline(
+            vehicle_count=used_vehicle_count,
+            record_steps=True,
+        )
         baseline_distance = self._total_distance(baseline_routes)
         self._validate_routes(baseline_routes)
-        self._record_initial_step(baseline_routes, baseline_distance)
 
-        savings_routes = self._clarke_wright()
-        savings_distance = self._total_distance(savings_routes)
-        self._validate_routes(savings_routes)
-        self.steps.append(
-            SolveStep(
-                index=len(self.steps) + 1,
-                title="Savings Construction",
-                detail=(
-                    f"Built {len(savings_routes)} route(s) with Clarke-Wright savings. "
-                    f"Distance after merge stage: {savings_distance:.2f} km."
-                ),
-                context_routes=self._to_route_summaries(savings_routes, "Savings", "savings"),
-            )
-        )
-
-        improved_routes = [route[:] for route in savings_routes]
-        self._improve_routes(improved_routes)
-        improved_distance = self._total_distance(improved_routes)
-        self._validate_routes(improved_routes)
-
-        heuristic_routes, heuristic_distance, heuristic_name = min(
-            (
-                (baseline_routes, baseline_distance, "baseline"),
-                (improved_routes, improved_distance, "improved"),
-            ),
-            key=lambda item: item[1],
-        )
-
-        final_index_routes = [route[:] for route in heuristic_routes]
-        final_distance = heuristic_distance
-
-        if len(self.orders) <= EXACT_ORDER_LIMIT:
-            exact_routes = self._exact_optimal_routes()
-            exact_distance = self._total_distance(exact_routes)
-            self._validate_routes(exact_routes)
-            final_index_routes = exact_routes
-            final_distance = exact_distance
-            self.steps.append(
-                SolveStep(
-                    index=len(self.steps) + 1,
-                    title="Exact Optimization",
-                    detail=(
-                        f"Used exact subset dynamic programming across {len(self.orders)} order node(s). "
-                        f"Optimal distance is {exact_distance:.2f} km."
-                    ),
-                    context_routes=self._to_route_summaries(exact_routes, "Exact", "final"),
-                )
-            )
-        elif heuristic_name == "baseline":
-            self.steps.append(
-                SolveStep(
-                    index=len(self.steps) + 1,
-                    title="Best Heuristic",
-                    detail=(
-                        "Kept the baseline construction because the savings plus local-search path "
-                        "did not beat it on total distance."
-                    ),
-                    context_routes=self._to_route_summaries(baseline_routes, "Baseline", "baseline"),
-                )
-            )
+        final_index_routes = [route[:] for route in baseline_routes]
+        self._improve_routes(final_index_routes, record_steps=True)
+        final_distance = self._total_distance(final_index_routes)
+        self._validate_routes(final_index_routes)
 
         final_routes = self._to_route_summaries(final_index_routes, "Final", "final")
         self.steps.append(
@@ -143,21 +106,23 @@ class ExplainableVRPSolver:
                 index=len(self.steps) + 1,
                 title="Final Answer",
                 detail=(
-                    f"Final highlighted solution uses {len(final_routes)} vehicle route(s). "
-                    f"Distance: {final_distance:.2f} km. Improvement over baseline: "
-                    f"{baseline_distance - final_distance:.2f} km."
+                    f"Nearest-neighbour construction is complete and 2-opt refinement is applied. "
+                    f"Final solution uses {len(final_index_routes)} vehicle route(s), with total distance "
+                    f"{final_distance:.2f} km and improvement of {baseline_distance - final_distance:.2f} km "
+                    f"over the raw construction."
                 ),
                 context_routes=final_routes,
             )
         )
 
+        baseline_summaries = self._to_route_summaries(baseline_routes, "Construction", "baseline")
         return SolveResult(
-            baseline_routes=self._to_route_summaries(baseline_routes, "Baseline", "baseline"),
-            savings_routes=self._to_route_summaries(savings_routes, "Savings", "savings"),
+            baseline_routes=baseline_summaries,
+            savings_routes=baseline_summaries,
             final_routes=final_routes,
             steps=self.steps,
             baseline_distance_km=baseline_distance,
-            savings_distance_km=savings_distance,
+            savings_distance_km=baseline_distance,
             final_distance_km=final_distance,
             vehicle_count=self.vehicle_count,
         )
@@ -173,62 +138,330 @@ class ExplainableVRPSolver:
         if sorted(seen) != list(range(len(self.orders))):
             raise ValueError("Routes must cover every order exactly once")
 
-    def _record_initial_step(self, baseline_routes: list[list[int]], baseline_distance: float) -> None:
-        top_edges = []
-        depot_index = len(self.orders)
-        for order_index, order in enumerate(self.orders):
-            top_edges.append((self.distance_matrix[depot_index][order_index], order))
-        top_edges.sort(key=lambda item: item[0])
-        alternatives = [
-            RouteOutline(
-                name=f"Seed {index + 1}",
-                node_ids=[self.depot.node_id, order.node_id],
-                score=distance,
-                reason=f"{order.label} is {distance:.2f} km from the depot.",
-                style="alternative",
-                color="#7b8a8b",
+    def _build_connection_steps(
+        self,
+        final_routes: list[list[int]],
+        baseline_distance: float,
+        final_distance: float,
+    ) -> list[SolveStep]:
+        steps: list[SolveStep] = [
+            SolveStep(
+                index=1,
+                title="Start Layout",
+                detail=(
+                    "No nodes are connected yet. Start from the depot and add one connection at a time. "
+                    "Each next edge is justified against the remaining candidate nodes."
+                ),
             )
-            for index, (distance, order) in enumerate(top_edges[:3])
         ]
+        committed_segments: list[RouteSummary] = []
+
+        for route_index, route in enumerate(final_routes, start=1):
+            route_planner = self._route_connection_planner(route)
+            current: int | None = None
+            remaining = tuple(route)
+            local_segments: list[RouteSummary] = []
+
+            for stop_position, chosen_order in enumerate(route, start=1):
+                rankings = route_planner(current, remaining)
+                chosen_leg, chosen_future, chosen_total, _ = next(
+                    (leg, future, total, candidate)
+                    for leg, future, total, candidate in rankings
+                    if candidate == chosen_order
+                )
+                from_label = "Depot" if current is None else self.orders[current].label
+                chosen_label = self.orders[chosen_order].label
+
+                detail = (
+                    f"Truck {route_index}: connect {from_label} to {chosen_label} next. "
+                    f"Score(next) = direct edge + best completion of the remaining nodes. "
+                    f"Here that is {chosen_leg:.2f} + {chosen_future:.2f} = {chosen_total:.2f} km, "
+                    f"which is the minimum among the remaining candidates."
+                )
+                chosen_edge = self._edge_outline(
+                    route_index,
+                    current,
+                    chosen_order,
+                    chosen_total,
+                    detail,
+                )
+                alternatives = [
+                    self._edge_outline(
+                        route_index,
+                        current,
+                        candidate,
+                        candidate_total,
+                        (
+                            f"If {from_label} connected to {self.orders[candidate].label} instead, "
+                            f"the score would be {candidate_leg:.2f} + {candidate_future:.2f} = "
+                            f"{candidate_total:.2f} km."
+                        ),
+                        style="alternative",
+                    )
+                    for candidate_leg, candidate_future, candidate_total, candidate in rankings
+                    if candidate != chosen_order
+                ][:2]
+                focus_node_ids = [self._state_node_id(current), self.orders[chosen_order].node_id]
+                steps.append(
+                    SolveStep(
+                        index=len(steps) + 1,
+                        title=f"Connect {from_label} to {chosen_label}",
+                        detail=detail,
+                        chosen=chosen_edge,
+                        alternatives=alternatives,
+                        focus_node_ids=focus_node_ids,
+                        context_routes=committed_segments + local_segments,
+                    )
+                )
+                local_segments.append(self._edge_summary(route_index, stop_position, current, chosen_order))
+                current = chosen_order
+                remaining = tuple(order for order in remaining if order != chosen_order)
+
+            if route:
+                last_order = route[-1]
+                last_label = self.orders[last_order].label
+                return_detail = (
+                    f"Truck {route_index}: connect {last_label} back to Depot to close the route "
+                    f"after all assigned nodes are served."
+                )
+                steps.append(
+                    SolveStep(
+                        index=len(steps) + 1,
+                        title=f"Return {last_label} to Depot",
+                        detail=return_detail,
+                        chosen=self._edge_outline(
+                            route_index,
+                            last_order,
+                            None,
+                            self._distance_between(last_order, None),
+                            return_detail,
+                        ),
+                        focus_node_ids=[self.orders[last_order].node_id, self.depot.node_id],
+                        context_routes=committed_segments + local_segments,
+                    )
+                )
+                local_segments.append(self._edge_summary(route_index, len(route) + 1, last_order, None))
+
+            committed_segments.extend(local_segments)
+
+        steps.append(
+            SolveStep(
+                index=len(steps) + 1,
+                title="Final Answer",
+                detail=(
+                    f"Final route set is complete. Distance: {final_distance:.2f} km. "
+                    f"Improvement over baseline: {baseline_distance - final_distance:.2f} km."
+                ),
+                context_routes=committed_segments,
+            )
+        )
+        return steps
+
+    def _route_connection_planner(self, route: list[int]):
+        route_tuple = tuple(route)
+
+        @lru_cache(maxsize=None)
+        def completion_cost(current: int | None, remaining: tuple[int, ...]) -> float:
+            if not remaining:
+                return self._distance_between(current, None)
+            best = math.inf
+            for candidate in remaining:
+                tail = tuple(order for order in remaining if order != candidate)
+                cost = self._distance_between(current, candidate) + completion_cost(candidate, tail)
+                if cost + EPSILON < best:
+                    best = cost
+            return best
+
+        def rankings(current: int | None, remaining: tuple[int, ...]) -> list[tuple[float, float, float, int]]:
+            scores: list[tuple[float, float, float, int]] = []
+            for candidate in remaining:
+                tail = tuple(order for order in remaining if order != candidate)
+                leg = self._distance_between(current, candidate)
+                future = completion_cost(candidate, tail)
+                total = leg + future
+                scores.append((leg, future, total, candidate))
+            scores.sort(key=lambda item: (item[2], item[3]))
+            return scores
+
+        return rankings
+
+    def _select_vehicle_usage(self) -> tuple[int, list[tuple[int, tuple[float, float]]]]:
+        best_vehicle_count = 1
+        best_objective = (math.inf, math.inf)
+        trials: list[tuple[int, tuple[float, float]]] = []
+        max_vehicles = min(self.vehicle_count, len(self.orders))
+
+        for vehicle_count in range(1, max_vehicles + 1):
+            trial_routes = self._nearest_neighbor_baseline(vehicle_count=vehicle_count)
+            improved_routes = [route[:] for route in trial_routes]
+            self._improve_routes(improved_routes, record_steps=False)
+            objective = self._solution_objective(improved_routes)
+            trials.append((vehicle_count, objective))
+            if objective < best_objective:
+                best_vehicle_count = vehicle_count
+                best_objective = objective
+
+        return best_vehicle_count, trials
+
+    def _record_start_step(
+        self,
+        used_vehicle_count: int,
+        fleet_trials: list[tuple[int, tuple[float, float]]],
+    ) -> None:
+        trial_text = "; ".join(
+            f"{vehicle_count} truck(s): longest route {objective[0]:.2f} km, total {objective[1]:.2f} km"
+            for vehicle_count, objective in fleet_trials
+        )
         self.steps.append(
             SolveStep(
                 index=1,
-                title="Prepared Distance Matrix",
+                title="Start Layout",
                 detail=(
-                    f"Loaded {len(self.orders)} order node(s) and {self.vehicle_count} vehicle(s). "
-                    f"Nearest-neighbor baseline distance is {baseline_distance:.2f} km."
+                    "No nodes are connected yet. "
+                    f"We test 1 to {self.vehicle_count} available vehicle(s) using nearest-neighbour construction "
+                    "followed by 2-opt improvement. We choose the fleet size with the smallest longest-route distance "
+                    f"(completion-time proxy), then total distance as tie-breaker. Selected: {used_vehicle_count} "
+                    f"vehicle(s). Trials -> {trial_text}."
                 ),
-                alternatives=alternatives,
-                context_routes=self._to_route_summaries(baseline_routes, "Baseline", "baseline"),
             )
         )
 
-    def _nearest_neighbor_baseline(self) -> list[list[int]]:
+    def _nearest_neighbor_baseline(
+        self,
+        vehicle_count: int | None = None,
+        record_steps: bool = False,
+    ) -> list[list[int]]:
         if not self.orders:
             return []
-        remaining = set(range(len(self.orders)))
-        routes = [[] for _ in range(self.vehicle_count)]
-        depot_index = len(self.orders)
 
-        for route in routes:
+        route_count = min(vehicle_count or self.vehicle_count, len(self.orders))
+        remaining = set(range(len(self.orders)))
+        routes = [[] for _ in range(route_count)]
+        committed_segments: list[RouteSummary] = []
+        edge_counts = [0 for _ in range(route_count)]
+
+        for route_index in range(route_count):
             if not remaining:
                 break
-            seed = min(remaining, key=lambda idx: self.distance_matrix[depot_index][idx])
-            route.append(seed)
-            remaining.remove(seed)
+            candidates: list[tuple[float, float, float, int]] = []
+            for candidate in remaining:
+                leg = self._distance_between(None, candidate)
+                trial_routes = [route[:] for route in routes]
+                trial_routes[route_index] = [candidate]
+                objective = self._solution_objective([route for route in trial_routes if route])
+                candidates.append((leg, objective[0], objective[1], candidate))
+            candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+            chosen_leg, chosen_makespan, chosen_total, chosen_order = candidates[0]
+
+            if record_steps:
+                chosen_label = self.orders[chosen_order].label
+                detail = (
+                    f"Truck {route_index + 1}: start from Depot and connect to {chosen_label}. "
+                    f"Nearest-neighbour score = direct edge distance. Chosen edge = {chosen_leg:.2f} km, "
+                    f"which is the smallest depot-to-node distance among unserved nodes. Tie-breakers use "
+                    f"resulting longest-route distance {chosen_makespan:.2f} km and total distance {chosen_total:.2f} km."
+                )
+                self.steps.append(
+                    SolveStep(
+                        index=len(self.steps) + 1,
+                        title=f"Connect Depot to {chosen_label}",
+                        detail=detail,
+                        chosen=self._edge_outline(
+                            route_index + 1,
+                            None,
+                            chosen_order,
+                            chosen_leg,
+                            detail,
+                        ),
+                        alternatives=[
+                            self._edge_outline(
+                                route_index + 1,
+                                None,
+                                candidate,
+                                candidate_leg,
+                                (
+                                    f"If Truck {route_index + 1} started with {self.orders[candidate].label}, "
+                                    f"the direct edge would be {candidate_leg:.2f} km, longest route "
+                                    f"{candidate_makespan:.2f} km, total distance {candidate_total:.2f} km."
+                                ),
+                                style="alternative",
+                            )
+                            for candidate_leg, candidate_makespan, candidate_total, candidate in candidates[1:3]
+                        ],
+                        focus_node_ids=[self.depot.node_id, self.orders[chosen_order].node_id],
+                        context_routes=committed_segments[:],
+                    )
+                )
+
+            routes[route_index].append(chosen_order)
+            remaining.remove(chosen_order)
+            edge_counts[route_index] += 1
+            committed_segments.append(
+                self._edge_summary(route_index + 1, edge_counts[route_index], None, chosen_order)
+            )
 
         while remaining:
-            best_pick = None
+            candidates: list[tuple[float, float, float, int, int]] = []
             for route_index, route in enumerate(routes):
-                anchor = route[-1] if route else depot_index
+                anchor = route[-1]
                 for candidate in remaining:
-                    distance = self.distance_matrix[anchor][candidate]
-                    if best_pick is None or distance < best_pick[0]:
-                        best_pick = (distance, route_index, candidate)
-            assert best_pick is not None
-            _, route_index, candidate = best_pick
-            routes[route_index].append(candidate)
-            remaining.remove(candidate)
+                    leg = self._distance_between(anchor, candidate)
+                    trial_routes = [existing[:] for existing in routes]
+                    trial_routes[route_index] = route + [candidate]
+                    objective = self._solution_objective([trial for trial in trial_routes if trial])
+                    candidates.append((leg, objective[0], objective[1], route_index, candidate))
+            candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
+            chosen_leg, chosen_makespan, chosen_total, route_index, chosen_order = candidates[0]
+            anchor = routes[route_index][-1]
+
+            if record_steps:
+                from_label = self.orders[anchor].label
+                chosen_label = self.orders[chosen_order].label
+                detail = (
+                    f"Truck {route_index + 1}: connect {from_label} to {chosen_label}. "
+                    f"Nearest-neighbour score = direct edge distance. Chosen edge = {chosen_leg:.2f} km, "
+                    f"which is the smallest available next connection. Tie-breakers use resulting longest-route "
+                    f"distance {chosen_makespan:.2f} km and total distance {chosen_total:.2f} km."
+                )
+                self.steps.append(
+                    SolveStep(
+                        index=len(self.steps) + 1,
+                        title=f"Connect {from_label} to {chosen_label}",
+                        detail=detail,
+                        chosen=self._edge_outline(
+                            route_index + 1,
+                            anchor,
+                            chosen_order,
+                            chosen_leg,
+                            detail,
+                        ),
+                        alternatives=[
+                            self._edge_outline(
+                                alternative_route_index + 1,
+                                routes[alternative_route_index][-1],
+                                candidate,
+                                candidate_leg,
+                                (
+                                    f"Alternative: Truck {alternative_route_index + 1} from "
+                                    f"{self.orders[routes[alternative_route_index][-1]].label} to "
+                                    f"{self.orders[candidate].label}; direct edge {candidate_leg:.2f} km, "
+                                    f"longest route {candidate_makespan:.2f} km, total distance {candidate_total:.2f} km."
+                                ),
+                                style="alternative",
+                            )
+                            for candidate_leg, candidate_makespan, candidate_total, alternative_route_index, candidate in candidates[1:3]
+                        ],
+                        focus_node_ids=[self.orders[anchor].node_id, self.orders[chosen_order].node_id],
+                        context_routes=committed_segments[:],
+                    )
+                )
+
+            routes[route_index].append(chosen_order)
+            remaining.remove(chosen_order)
+            edge_counts[route_index] += 1
+            committed_segments.append(
+                self._edge_summary(route_index + 1, edge_counts[route_index], anchor, chosen_order)
+            )
 
         return [route for route in routes if route]
 
@@ -279,7 +512,7 @@ class ExplainableVRPSolver:
                 break
         return routes
 
-    def _improve_routes(self, routes: list[list[int]]) -> None:
+    def _improve_routes(self, routes: list[list[int]], record_steps: bool = True) -> None:
         while True:
             improved = False
             for route_index, route in enumerate(routes):
@@ -289,80 +522,31 @@ class ExplainableVRPSolver:
                 best_route, improvement, left_customer, right_customer = opt_candidates[0]
                 routes[route_index] = best_route
                 improved = True
-                self.steps.append(
-                    SolveStep(
-                        index=len(self.steps) + 1,
-                        title="2-opt Improvement",
-                        detail=(
-                            f"Reversed a segment inside Truck {route_index + 1} to remove an inefficient bend. "
-                            f"Distance improved by {improvement:.2f} km."
-                        ),
-                        chosen=RouteOutline(
-                            name=f"Truck {route_index + 1}",
-                            node_ids=self._route_node_ids(best_route),
-                            score=improvement,
-                            reason=f"2-opt reversal between {left_customer} and {right_customer}.",
-                            style="selected",
-                            color=ROUTE_COLORS[route_index % len(ROUTE_COLORS)],
-                        ),
-                        focus_node_ids=[left_customer, right_customer],
-                        context_routes=self._to_route_summaries(routes, "Final", "final"),
+                if record_steps:
+                    self.steps.append(
+                        SolveStep(
+                            index=len(self.steps) + 1,
+                            title="2-opt Improvement",
+                            detail=(
+                                f"Truck {route_index + 1}: reverse the segment between "
+                                f"{self._node_label(left_customer)} and {self._node_label(right_customer)}. "
+                                f"2-opt keeps this reversal because it shortens the route by {improvement:.2f} km."
+                            ),
+                            chosen=RouteOutline(
+                                name=f"Truck {route_index + 1}",
+                                node_ids=self._route_node_ids(best_route),
+                                score=improvement,
+                                reason=(
+                                    f"2-opt rule: if reversing a segment reduces route length, accept the reversal. "
+                                    f"Improvement = {improvement:.2f} km."
+                                ),
+                                style="selected",
+                                color=ROUTE_COLORS[route_index % len(ROUTE_COLORS)],
+                            ),
+                            focus_node_ids=[left_customer, right_customer],
+                            context_routes=self._to_route_summaries(routes, "Final", "final"),
+                        )
                     )
-                )
-            relocate = self._best_relocate(routes)
-            if relocate is not None and relocate.improvement > 1e-6:
-                routes[:] = relocate.updated_routes
-                improved = True
-                moved = self.orders[relocate.source_customer].label
-                self.steps.append(
-                    SolveStep(
-                        index=len(self.steps) + 1,
-                        title="Relocate Improvement",
-                        detail=(
-                            f"Moved {moved} into a better vehicle route because that shortened the total drive by "
-                            f"{relocate.improvement:.2f} km."
-                        ),
-                        chosen=RouteOutline(
-                            name=f"Move {moved}",
-                            node_ids=self._route_node_ids(routes[relocate.target_index]),
-                            score=relocate.improvement,
-                            reason=f"{moved} fits better earlier in Truck {relocate.target_index + 1}.",
-                            style="selected",
-                            color=ROUTE_COLORS[relocate.target_index % len(ROUTE_COLORS)],
-                        ),
-                        focus_node_ids=[self.orders[relocate.source_customer].node_id],
-                        context_routes=self._to_route_summaries(routes, "Final", "final"),
-                    )
-                )
-            swap = self._best_swap(routes)
-            if swap is not None and swap.improvement > 1e-6:
-                routes[:] = swap.updated_routes
-                improved = True
-                left_label = self.orders[swap.left_customer].label
-                right_label = self.orders[swap.right_customer].label
-                self.steps.append(
-                    SolveStep(
-                        index=len(self.steps) + 1,
-                        title="Swap Improvement",
-                        detail=(
-                            f"Swapped {left_label} with {right_label} because the exchange shortened the combined routes "
-                            f"by {swap.improvement:.2f} km."
-                        ),
-                        chosen=RouteOutline(
-                            name=f"Swap {left_label} / {right_label}",
-                            node_ids=self._route_node_ids(routes[swap.left_index]),
-                            score=swap.improvement,
-                            reason="Swap reduced cross-route travel overlap.",
-                            style="selected",
-                            color=ROUTE_COLORS[swap.left_index % len(ROUTE_COLORS)],
-                        ),
-                        focus_node_ids=[
-                            self.orders[swap.left_customer].node_id,
-                            self.orders[swap.right_customer].node_id,
-                        ],
-                        context_routes=self._to_route_summaries(routes, "Final", "final"),
-                    )
-                )
             if not improved:
                 break
 
@@ -461,6 +645,33 @@ class ExplainableVRPSolver:
                             )
         return best
 
+    def _optimize_route_order(self, route: list[int]) -> list[int]:
+        if len(route) <= 1 or len(route) > ROUTE_EXACT_ORDER_LIMIT:
+            return route[:]
+
+        route_tuple = tuple(route)
+
+        @lru_cache(maxsize=None)
+        def completion(current: int | None, remaining: tuple[int, ...]) -> tuple[float, tuple[int, ...]]:
+            if not remaining:
+                return (self._distance_between(current, None), ())
+
+            best_cost = math.inf
+            best_order: tuple[int, ...] = ()
+            for candidate in remaining:
+                tail = tuple(order for order in remaining if order != candidate)
+                tail_cost, tail_order = completion(candidate, tail)
+                total_cost = self._distance_between(current, candidate) + tail_cost
+                candidate_order = (candidate,) + tail_order
+                if total_cost + EPSILON < best_cost or (
+                    abs(total_cost - best_cost) <= EPSILON and candidate_order < best_order
+                ):
+                    best_cost = total_cost
+                    best_order = candidate_order
+            return (best_cost, best_order)
+
+        return list(completion(None, route_tuple)[1])
+
     def _exact_optimal_routes(self) -> list[list[int]]:
         order_count = len(self.orders)
         if order_count == 0:
@@ -470,9 +681,13 @@ class ExplainableVRPSolver:
         route_costs, route_orders = self._subset_route_catalog()
         max_routes = min(self.vehicle_count, order_count)
 
-        partition_costs = [[math.inf for _ in range(full_mask + 1)] for _ in range(max_routes + 1)]
+        infinity_objective = (math.inf, math.inf)
+        partition_objectives = [
+            [infinity_objective for _ in range(full_mask + 1)]
+            for _ in range(max_routes + 1)
+        ]
         partition_choice = [[0 for _ in range(full_mask + 1)] for _ in range(max_routes + 1)]
-        partition_costs[0][0] = 0.0
+        partition_objectives[0][0] = (0.0, 0.0)
 
         for route_count in range(1, max_routes + 1):
             for mask in range(1, full_mask + 1):
@@ -480,17 +695,20 @@ class ExplainableVRPSolver:
                 submask = mask
                 while submask:
                     if submask & anchor:
-                        previous_cost = partition_costs[route_count - 1][mask ^ submask]
-                        if previous_cost < math.inf:
-                            candidate_cost = previous_cost + route_costs[submask]
-                            if candidate_cost + EPSILON < partition_costs[route_count][mask]:
-                                partition_costs[route_count][mask] = candidate_cost
+                        previous_objective = partition_objectives[route_count - 1][mask ^ submask]
+                        if previous_objective[0] < math.inf:
+                            candidate_objective = (
+                                max(previous_objective[0], route_costs[submask]),
+                                previous_objective[1] + route_costs[submask],
+                            )
+                            if candidate_objective < partition_objectives[route_count][mask]:
+                                partition_objectives[route_count][mask] = candidate_objective
                                 partition_choice[route_count][mask] = submask
                     submask = (submask - 1) & mask
 
         best_route_count = min(
             range(1, max_routes + 1),
-            key=lambda route_count: partition_costs[route_count][full_mask],
+            key=lambda route_count: (partition_objectives[route_count][full_mask], route_count),
         )
         mask = full_mask
         route_count = best_route_count
@@ -595,6 +813,20 @@ class ExplainableVRPSolver:
     def _total_distance(self, routes: list[list[int]]) -> float:
         return sum(self._route_distance(route) for route in routes)
 
+    def _makespan_distance(self, routes: list[list[int]]) -> float:
+        if not routes:
+            return 0.0
+        return max(self._route_distance(route) for route in routes)
+
+    def _solution_objective(self, routes: list[list[int]]) -> tuple[float, float]:
+        return (self._makespan_distance(routes), self._total_distance(routes))
+
+    def _distance_between(self, left: int | None, right: int | None) -> float:
+        depot_index = len(self.orders)
+        left_index = depot_index if left is None else left
+        right_index = depot_index if right is None else right
+        return self.distance_matrix[left_index][right_index]
+
     def _saving(self, left: int, right: int) -> float:
         depot_index = len(self.orders)
         return (
@@ -619,6 +851,54 @@ class ExplainableVRPSolver:
 
     def _route_node_ids(self, route: list[int]) -> list[str]:
         return [self.depot.node_id] + [self.orders[index].node_id for index in route] + [self.depot.node_id]
+
+    def _state_node_id(self, state: int | None) -> str:
+        return self.depot.node_id if state is None else self.orders[state].node_id
+
+    def _node_label(self, node_id: str) -> str:
+        if node_id == self.depot.node_id:
+            return self.depot.label
+        for order in self.orders:
+            if order.node_id == node_id:
+                return order.label
+        return node_id
+
+    def _edge_summary(
+        self,
+        route_index: int,
+        edge_index: int,
+        left: int | None,
+        right: int | None,
+    ) -> RouteSummary:
+        left_id = self._state_node_id(left)
+        right_id = self._state_node_id(right)
+        return RouteSummary(
+            name=f"Truck {route_index} Edge {edge_index}",
+            node_ids=[left_id, right_id],
+            distance_km=self._distance_between(left, right),
+            color="#16a34a",
+            style="final",
+        )
+
+    def _edge_outline(
+        self,
+        route_index: int,
+        left: int | None,
+        right: int | None,
+        score: float,
+        reason: str,
+        style: str = "selected",
+    ) -> RouteOutline:
+        left_id = self._state_node_id(left)
+        right_id = self._state_node_id(right)
+        return RouteOutline(
+            name=f"Truck {route_index} Edge",
+            node_ids=[left_id, right_id],
+            score=score,
+            reason=reason,
+            style=style,
+            color="#16a34a" if style == "selected" else "#dc2626",
+        )
 
 
 def haversine_km(left: GeoPoint, right: GeoPoint) -> float:

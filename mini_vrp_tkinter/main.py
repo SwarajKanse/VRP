@@ -144,7 +144,7 @@ class MiniVRPApp:
         view_box.pack(fill="x", pady=(0, 12))
         ttk.Checkbutton(view_box, text="Show Map Background", variable=self.show_map, command=self._refresh_canvas).pack(anchor="w")
         ttk.Radiobutton(view_box, text="Current Step", value="step", variable=self.view_mode, command=self._refresh_canvas).pack(anchor="w")
-        ttk.Radiobutton(view_box, text="Baseline", value="baseline", variable=self.view_mode, command=self._refresh_canvas).pack(anchor="w")
+        ttk.Radiobutton(view_box, text="Construction", value="baseline", variable=self.view_mode, command=self._refresh_canvas).pack(anchor="w")
         ttk.Radiobutton(view_box, text="Final", value="final", variable=self.view_mode, command=self._refresh_canvas).pack(anchor="w")
         ttk.Separator(view_box).pack(fill="x", pady=8)
         ttk.Label(view_box, text="Canvas Navigation", style="Body.TLabel").pack(anchor="w")
@@ -196,7 +196,7 @@ class MiniVRPApp:
         )
 
     def _build_right_panel(self, parent) -> None:
-        steps_box = ttk.LabelFrame(parent, text="Solver Steps", style="Panel.TLabelframe", padding=12)
+        steps_box = ttk.LabelFrame(parent, text="Connection Steps", style="Panel.TLabelframe", padding=12)
         steps_box.pack(fill="both", expand=True)
 
         self.step_list = tk.Listbox(
@@ -225,7 +225,7 @@ class MiniVRPApp:
         )
         self.step_detail.pack(fill="x")
 
-        ttk.Label(steps_box, text="Alternatives", style="Title.TLabel").pack(anchor="w", pady=(12, 4))
+        ttk.Label(steps_box, text="Rejected Alternatives", style="Title.TLabel").pack(anchor="w", pady=(12, 4))
         self.alternative_list = tk.Listbox(
             steps_box,
             activestyle="none",
@@ -492,7 +492,7 @@ class MiniVRPApp:
         self.alternative_list.delete(0, "end")
         self.summary_text.delete("1.0", "end")
         if self.solution is None:
-            self.summary_text.insert("1.0", "Baseline, savings, and final routes will appear after solving.")
+            self.summary_text.insert("1.0", "Construction and final routes will appear after solving.")
             return
         for step in self.solution.steps:
             self.step_list.insert("end", f"{step.index}. {step.title}")
@@ -504,8 +504,7 @@ class MiniVRPApp:
         self.summary_text.insert(
             "1.0",
             (
-                f"Baseline: {self.solution.baseline_distance_km:.2f} km\n"
-                f"Savings: {self.solution.savings_distance_km:.2f} km\n"
+                f"Construction: {self.solution.baseline_distance_km:.2f} km\n"
                 f"Final: {self.solution.final_distance_km:.2f} km\n\n"
                 "Final Routes\n"
             ),
